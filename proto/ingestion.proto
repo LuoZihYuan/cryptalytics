@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package ingestion;
+
+service IngestionService {
+  rpc Subscribe(SubscribeRequest) returns (SubscribeResponse);
+  rpc Unsubscribe(UnsubscribeRequest) returns (UnsubscribeResponse);
+  rpc ListSubscriptions(ListSubscriptionsRequest) returns (ListSubscriptionsResponse);
+}
+
+message SubscribeRequest {
+  string symbol = 1;
+}
+
+message SubscribeResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message UnsubscribeRequest {
+  string symbol = 1;
+}
+
+message UnsubscribeResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ListSubscriptionsRequest {}
+
+message ListSubscriptionsResponse {
+  repeated string symbols = 1;
+}
