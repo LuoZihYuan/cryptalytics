@@ -2,7 +2,7 @@
 set -e
 
 PROTO_DIR="proto"
-OUT_DIR="services/ingestion/pb"
+OUT_DIR="services/ingestion/ingestion/pb"
 
 mkdir -p "$OUT_DIR"
 touch "$OUT_DIR/__init__.py"
