@@ -1,6 +1,7 @@
 import argparse
 import asyncio
-from datetime import datetime, timezone
+import io
+import zipfile
 
 import httpx
 import structlog
@@ -15,81 +16,56 @@ structlog.configure(
 log = structlog.get_logger()
 
 
-async def fetch_candles(
-  client: httpx.AsyncClient,
-  symbol: str,
-  start_timestamp: int,
-  end_timestamp: int,
-) -> list[Candle]:
-  """Fetch 1m candles for the given time range."""
-  candles: list[Candle] = []
-  current_start = start_timestamp
+async def download_candles(client: httpx.AsyncClient, symbol: str, date: str) -> bytes:
+  """Download ZIP file for a single date."""
+  url = f"{settings.binance_bulk_url}/{symbol}/1m/{symbol}-1m-{date}.zip"
+  log.info("Downloading", url=url)
 
-  while current_start < end_timestamp:
-    response = await client.get(
-      "/klines",
-      params={
-        "symbol": symbol,
-        "interval": "1m",
-        "startTime": current_start,
-        "endTime": end_timestamp,
-        "limit": 1000,
-      },
-    )
-    response.raise_for_status()
-    batch = response.json()
+  response = await client.get(url)
+  response.raise_for_status()
+  return response.content
 
-    if not batch:
-      break
 
-    for kline in batch:
-      candles.append(Candle.from_binance(symbol, kline))
+def parse_candles(symbol: str, zip_content: bytes) -> list[Candle]:
+  """Extract CSV from ZIP and parse into Candle objects."""
+  candles = []
 
-    current_start = batch[-1][6] + 1
+  with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
+    csv_filename = zf.namelist()[0]
+    with zf.open(csv_filename) as f:
+      for line in f:
+        row = line.decode("utf-8").strip().split(",")
+        candles.append(Candle.from_binance(symbol, row))
 
   return candles
 
 
-async def run(symbol: str, start_date: str, end_date: str):
-  # Parse dates to timestamps
-  start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-  end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(
-    hour=23, minute=59, second=59, microsecond=999999, tzinfo=timezone.utc
-  )
-  start_timestamp = int(start_dt.timestamp() * 1000)
-  end_timestamp = int(end_dt.timestamp() * 1000)
+async def run(symbol: str, date: str):
+  log.info("Starting backfill", symbol=symbol, date=date)
 
-  log.info(
-    "Starting backfill",
-    symbol=symbol,
-    start=start_dt.isoformat(),
-    end=end_dt.isoformat(),
-  )
-
-  # Initialize
   delta_repository = DeltaRepository(
     table_path=settings.delta_candles_path,
     storage_options=settings.delta_storage_options,
   )
   await delta_repository.start()
 
-  async with httpx.AsyncClient(base_url=settings.binance_rest_url) as client:
-    candles = await fetch_candles(client, symbol, start_timestamp, end_timestamp)
+  async with httpx.AsyncClient() as client:
+    zip_content = await download_candles(client, symbol, date)
+    candles = parse_candles(symbol, zip_content)
     await delta_repository.save_candles(candles)
 
   await delta_repository.stop()
 
-  log.info("Backfill complete", symbol=symbol, count=len(candles))
+  log.info("Backfill complete", symbol=symbol, date=date, count=len(candles))
 
 
 def main():
   parser = argparse.ArgumentParser(description="Backfill historical candles")
   parser.add_argument("--symbol", required=True, help="Trading pair (e.g., BTCUSDT)")
-  parser.add_argument("--start-date", required=True, help="Start date (YYYY-MM-DD)")
-  parser.add_argument("--end-date", required=True, help="End date (YYYY-MM-DD)")
+  parser.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
   args = parser.parse_args()
 
-  asyncio.run(run(args.symbol, args.start_date, args.end_date))
+  asyncio.run(run(args.symbol, args.date))
 
 
 if __name__ == "__main__":

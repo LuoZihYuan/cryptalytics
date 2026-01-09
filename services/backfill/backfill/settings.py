@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
   # Binance
-  binance_rest_url: str = "https://api.binance.us/api/v3"
+  binance_bulk_url: str = "https://data.binance.us/public_data/spot/daily/klines"
 
   # Delta Lake
   delta_candles_path: str = "s3://cryptalytics/candles"
