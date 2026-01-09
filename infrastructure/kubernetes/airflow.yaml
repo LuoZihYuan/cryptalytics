@@ -1,0 +1,52 @@
+executor: KubernetesExecutor
+
+webserver:
+  replicas: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+scheduler:
+  replicas: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+workers:
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: airflow
+    database: airflow
+
+redis:
+  enabled: false
+
+dags:
+  gitSync:
+    enabled: true
+    repo: https://github.com/LuoZihYuan/cryptalytics.git
+    branch: main
+    subPath: orchestration/dags
+
+config:
+  AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+  AIRFLOW__KUBERNETES__NAMESPACE: "cryptalytics"
+  AIRFLOW__KUBERNETES__DELETE_WORKER_PODS: "True"
+  AIRFLOW__KUBERNETES__DELETE_WORKER_PODS_ON_FAILURE: "False"

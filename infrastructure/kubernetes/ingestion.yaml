@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion
+  namespace: cryptalytics
+  labels:
+    app: ingestion
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ingestion
+  template:
+    metadata:
+      labels:
+        app: ingestion
+    spec:
+      containers:
+        - name: ingestion
+          image: cryptalytics/ingestion:latest
+          ports:
+            - containerPort: 50051
+          env:
+            - name: INGESTION_BINANCE_WS_URL
+              value: "wss://stream.binance.us:9443/ws"
+            - name: INGESTION_BINANCE_REST_URL
+              value: "https://api.binance.us/api/v3"
+            - name: INGESTION_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: INGESTION_DELTA_CANDLES_PATH
+              value: "s3://cryptalytics/candles"
+          envFrom:
+            - secretRef:
+                name: ingestion-secrets
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestion
+  namespace: cryptalytics
+  labels:
+    app: ingestion
+spec:
+  selector:
+    app: ingestion
+  ports:
+    - port: 50051
+      targetPort: 50051
+      protocol: TCP
