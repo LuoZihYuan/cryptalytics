@@ -7,6 +7,7 @@ from grpc import aio
 from ingestion.settings import settings
 from ingestion.pb import ingestion_pb2_grpc
 from ingestion.handler.ingestion import IngestionHandler
+from ingestion.client.airflow import AirflowClient
 from ingestion.repository.kafka import KafkaRepository
 from ingestion.service.rest import RestService
 from ingestion.service.websocket import WebSocketService
@@ -19,6 +20,9 @@ log = structlog.get_logger()
 
 
 async def run():
+  # Initialize clients
+  airflow_client = AirflowClient()
+
   # Initialize repositories
   kafka_repository = KafkaRepository()
   delta_repository = DeltaRepository(
@@ -31,9 +35,11 @@ async def run():
   websocket_service = WebSocketService(
     kafka_repository=kafka_repository,
     rest_service=rest_service,
+    airflow_client=airflow_client,
   )
 
-  # Start repositories and services
+  # Start clients, repositories, and services
+  await airflow_client.start()
   await kafka_repository.start()
   await delta_repository.start()
   await rest_service.start()
@@ -65,13 +71,15 @@ async def run():
   # 1. Stop accepting new gRPC requests, allow in-flight to complete
   # 2. Stop WebSocket connections (stops producing to Kafka)
   # 3. Stop services
-  # 4. Stop repositories (flushes buffered data)
+  # 4. Stop repositories
+  # 5. Stop clients
   log.info("Shutting down...")
   await server.stop(grace=5)
   await websocket_service.stop()
   await rest_service.stop()
   await delta_repository.stop()
   await kafka_repository.stop()
+  await airflow_client.stop()
   log.info("Shutdown complete")
 
 

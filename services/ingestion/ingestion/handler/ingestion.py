@@ -12,10 +12,11 @@ class IngestionHandler(ingestion_pb2_grpc.IngestionServiceServicer):
 
   async def Subscribe(self, request, context):
     symbol = request.symbol.upper()
-    log.info("Subscribe request", symbol=symbol)
+    dag_run_id = request.dag_run_id if request.HasField("dag_run_id") else None
+    log.info("Subscribe request", symbol=symbol, dag_run_id=dag_run_id)
 
     try:
-      await self.websocket_service.subscribe(symbol)
+      await self.websocket_service.subscribe(symbol, dag_run_id)
       return ingestion_pb2.SubscribeResponse(
         success=True,
         message=f"Subscribed to {symbol}",

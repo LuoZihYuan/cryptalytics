@@ -6,6 +6,7 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 
 from ingestion.settings import settings
+from ingestion.client.airflow import AirflowClient
 from ingestion.repository.kafka import KafkaRepository
 from ingestion.service.rest import RestService
 from pylib.model.tick import Tick
@@ -14,17 +15,27 @@ log = structlog.get_logger()
 
 
 class WebSocketService:
-  def __init__(self, kafka_repository: KafkaRepository, rest_service: RestService):
+  def __init__(
+    self,
+    kafka_repository: KafkaRepository,
+    rest_service: RestService,
+    airflow_client: AirflowClient,
+  ):
     self.kafka_repository = kafka_repository
     self.rest_service = rest_service
+    self.airflow_client = airflow_client
     self.connections: dict[str, ClientConnection] = {}
     self.tasks: dict[str, asyncio.Task] = {}
     self.same_day_fetched: set[str] = set()
+    self.pending_callbacks: dict[str, str] = {}  # symbol -> dag_run_id
 
-  async def subscribe(self, symbol: str):
+  async def subscribe(self, symbol: str, dag_run_id: str | None = None):
     if symbol in self.tasks:
       log.warning("Already subscribed", symbol=symbol)
       return
+
+    if dag_run_id:
+      self.pending_callbacks[symbol] = dag_run_id
 
     task = asyncio.create_task(
       self._handle_symbol(symbol),
@@ -32,7 +43,7 @@ class WebSocketService:
     )
     self.tasks[symbol] = task
     task.add_done_callback(lambda t: self._on_task_done(symbol, t))
-    log.info("Subscribed", symbol=symbol)
+    log.info("Subscribed", symbol=symbol, dag_run_id=dag_run_id)
 
   async def unsubscribe(self, symbol: str):
     if symbol not in self.tasks:
@@ -41,6 +52,7 @@ class WebSocketService:
 
     self.tasks[symbol].cancel()
     self.same_day_fetched.discard(symbol)
+    self.pending_callbacks.pop(symbol, None)
     log.info("Unsubscribed", symbol=symbol)
 
   def list_subscriptions(self) -> list[str]:
@@ -110,6 +122,11 @@ class WebSocketService:
         until_timestamp=until_minute,
       )
       log.info("Same-day candles fetched", symbol=symbol, count=count)
+
+      # Callback to Airflow to mark task complete
+      if dag_run_id := self.pending_callbacks.pop(symbol, None):
+        await self.airflow_client.mark_task_success(dag_run_id)
+
     except Exception as e:
       log.error("Failed to fetch same-day candles", symbol=symbol, error=str(e))
 

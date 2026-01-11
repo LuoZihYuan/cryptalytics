@@ -10,6 +10,7 @@ service IngestionService {
 
 message SubscribeRequest {
   string symbol = 1;
+  optional string dag_run_id = 2;
 }
 
 message SubscribeResponse {

@@ -14,6 +14,11 @@ class Settings(BaseSettings):
   delta_candles_path: str = "s3://cryptalytics/candles"
   delta_storage_options: dict = {}
 
+  # Airflow
+  airflow_base_url: str = "http://airflow-webserver:8080"
+  airflow_dag_id: str = "symbol_onboarding"
+  airflow_task_id: str = "realtime_ready"
+
   # gRPC
   grpc_port: int = 50051
 
