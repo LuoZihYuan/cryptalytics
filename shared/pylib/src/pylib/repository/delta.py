@@ -4,8 +4,6 @@ import structlog
 from deltalake import write_deltalake
 import pyarrow as pa
 
-from pylib.model.candle import Candle
-
 log = structlog.get_logger()
 
 CANDLE_SCHEMA = pa.schema(
@@ -18,6 +16,7 @@ CANDLE_SCHEMA = pa.schema(
     ("low", pa.decimal128(18, 8)),
     ("close", pa.decimal128(18, 8)),
     ("volume", pa.decimal128(18, 8)),
+    ("trades", pa.int64()),
   ]
 )
 
@@ -28,12 +27,12 @@ class DeltaRepository:
     self.storage_options = storage_options or {}
     self._write_lock = asyncio.Lock()
 
-  async def save_candles(self, candles: list[Candle]):
-    if not candles:
+  async def save_table(self, table: pa.Table):
+    if table.num_rows == 0:
       return
 
-    data = [c.model_dump() for c in candles]
-    table = pa.Table.from_pylist(data, schema=CANDLE_SCHEMA)
+    # Reorder columns to match schema
+    table = table.select([f.name for f in CANDLE_SCHEMA])
 
     async with self._write_lock:
       await asyncio.to_thread(
@@ -44,4 +43,4 @@ class DeltaRepository:
         storage_options=self.storage_options,
       )
 
-    log.info("Candles saved to Delta Lake", count=len(candles))
+    log.info("Candles saved to Delta Lake", count=table.num_rows)

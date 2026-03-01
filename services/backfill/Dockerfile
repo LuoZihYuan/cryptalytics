@@ -12,16 +12,18 @@ COPY services/backfill/pyproject.toml services/backfill/uv.lock ./
 RUN sed -i 's/, editable = true//' pyproject.toml
 # Install dependencies only (cached layer)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-install-project
+    uv sync --frozen --no-install-project
 COPY services/backfill/backfill ./backfill
 # Install project
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked
+    uv sync --frozen
 
 FROM python:3.13-slim-bookworm
 RUN groupadd --system --gid 999 nonroot \
  && useradd --system --gid 999 --uid 999 --create-home nonroot
 COPY --from=builder --chown=nonroot:nonroot /app/services/backfill /app
+COPY --from=builder --chown=nonroot:nonroot /app/shared/pylib /app/shared/pylib
+RUN mkdir -p /data/candles && chown nonroot:nonroot /data/candles
 ENV PATH="/app/.venv/bin:$PATH"
 USER nonroot
 WORKDIR /app

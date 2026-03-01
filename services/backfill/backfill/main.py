@@ -1,13 +1,13 @@
 import argparse
 import asyncio
-import io
-import zipfile
+from datetime import datetime, timezone
 
 import httpx
 import structlog
 
 from backfill.settings import settings
-from pylib.model.candle import Candle
+from backfill.plan import build_download_plan
+from backfill.download import download_parse_save
 from pylib.repository.delta import DeltaRepository
 
 structlog.configure(
@@ -16,56 +16,63 @@ structlog.configure(
 log = structlog.get_logger()
 
 
-async def download_candles(client: httpx.AsyncClient, symbol: str, date: str) -> bytes:
-  """Download ZIP file for a single date."""
-  url = f"{settings.binance_bulk_url}/{symbol}/1m/{symbol}-1m-{date}.zip"
-  log.info("Downloading", url=url)
+async def run(symbol: str, start_date: str, end_date: str):
+  start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+  end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
-  response = await client.get(url)
-  response.raise_for_status()
-  return response.content
-
-
-def parse_candles(symbol: str, zip_content: bytes) -> list[Candle]:
-  """Extract CSV from ZIP and parse into Candle objects."""
-  candles = []
-
-  with zipfile.ZipFile(io.BytesIO(zip_content)) as zf:
-    csv_filename = zf.namelist()[0]
-    with zf.open(csv_filename) as f:
-      for line in f:
-        row = line.decode("utf-8").strip().split(",")
-        candles.append(Candle.from_binance(symbol, row))
-
-  return candles
-
-
-async def run(symbol: str, date: str):
-  log.info("Starting backfill", symbol=symbol, date=date)
+  plan = build_download_plan(start, end)
+  log.info(
+    "Starting backfill",
+    symbol=symbol,
+    start_date=start_date,
+    end_date=end_date,
+    monthly_files=len(plan["monthly"]),
+    daily_files=len(plan["daily"]),
+  )
 
   delta_repository = DeltaRepository(
     table_path=settings.delta_candles_path,
     storage_options=settings.delta_storage_options,
   )
-  await delta_repository.start()
+
+  semaphore = asyncio.Semaphore(settings.download_concurrency)
 
   async with httpx.AsyncClient() as client:
-    zip_content = await download_candles(client, symbol, date)
-    candles = parse_candles(symbol, zip_content)
-    await delta_repository.save_candles(candles)
+    tasks = []
 
-  await delta_repository.stop()
+    for interval, dates in plan.items():
+      for date in dates:
+        url = f"{settings.binance_bulk_url}/{interval}/klines/{symbol}/1m/{symbol}-1m-{date}.zip"
+        tasks.append(
+          download_parse_save(
+            client,
+            semaphore,
+            delta_repository,
+            symbol,
+            url,
+            max_retries=settings.max_retries,
+            retry_base_delay=settings.retry_base_delay,
+          )
+        )
 
-  log.info("Backfill complete", symbol=symbol, date=date, count=len(candles))
+    results = await asyncio.gather(*tasks)
+    total_candles = sum(results)
+
+  log.info("Backfill complete", symbol=symbol, candles=total_candles)
 
 
 def main():
   parser = argparse.ArgumentParser(description="Backfill historical candles")
   parser.add_argument("--symbol", required=True, help="Trading pair (e.g., BTCUSDT)")
-  parser.add_argument("--date", required=True, help="Date (YYYY-MM-DD)")
+  parser.add_argument(
+    "--start-date", required=True, help="Start date inclusive, UTC (YYYY-MM-DD)"
+  )
+  parser.add_argument(
+    "--end-date", required=True, help="End date exclusive, UTC (YYYY-MM-DD)"
+  )
   args = parser.parse_args()
 
-  asyncio.run(run(args.symbol, args.date))
+  asyncio.run(run(args.symbol, args.start_date, args.end_date))
 
 
 if __name__ == "__main__":
