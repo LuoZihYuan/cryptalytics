@@ -13,30 +13,16 @@ log = structlog.get_logger()
 class RestService:
   def __init__(self, delta_repository: DeltaRepository):
     self.delta_repository = delta_repository
-    self.client: httpx.AsyncClient | None = None
-
-  async def start(self):
     self.client = httpx.AsyncClient(base_url=settings.binance_rest_url)
-    log.info("REST service started")
 
-  async def stop(self):
-    if self.client:
-      await self.client.aclose()
-      log.info("REST service stopped")
+  async def close(self):
+    await self.client.aclose()
+    log.info("REST service closed")
 
   async def fetch_and_save_same_day_candles(
     self, symbol: str, until_timestamp: int
   ) -> int:
-    """
-    Fetch 1m candles from midnight until the given timestamp
-    and save directly to Delta Lake.
-
-    Returns:
-      Number of candles saved
-    """
-    if not self.client:
-      raise RuntimeError("Client not started")
-
+    """Fetch 1m candles from midnight until the given timestamp and save to Delta Lake."""
     now = datetime.fromtimestamp(until_timestamp / 1000, tz=timezone.utc)
     midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start_timestamp = int(midnight.timestamp() * 1000)
@@ -73,7 +59,6 @@ class RestService:
 
       current_start = batch[-1][6] + 1
 
-    # Save directly to Delta Lake
     await self.delta_repository.save_candles(candles)
 
     log.info("Same-day candles saved", symbol=symbol, count=len(candles))

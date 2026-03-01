@@ -1,5 +1,6 @@
 import asyncio
 import signal
+from contextlib import asynccontextmanager
 
 import structlog
 from grpc import aio
@@ -19,18 +20,16 @@ structlog.configure(
 log = structlog.get_logger()
 
 
-async def run():
-  # Initialize clients
+@asynccontextmanager
+async def lifecycle():
+  """Manage the full server lifecycle: init → yield → shutdown."""
+  # --- Init ---
   airflow_client = AirflowClient()
-
-  # Initialize repositories
   kafka_repository = KafkaRepository()
   delta_repository = DeltaRepository(
     table_path=settings.delta_candles_path,
     storage_options=settings.delta_storage_options,
   )
-
-  # Initialize services
   rest_service = RestService(delta_repository=delta_repository)
   websocket_service = WebSocketService(
     kafka_repository=kafka_repository,
@@ -38,13 +37,8 @@ async def run():
     airflow_client=airflow_client,
   )
 
-  # Start clients, repositories, and services
-  await airflow_client.start()
   await kafka_repository.start()
-  await delta_repository.start()
-  await rest_service.start()
 
-  # Configure gRPC server
   server = aio.server()
   handler = IngestionHandler(websocket_service)
   ingestion_pb2_grpc.add_IngestionServiceServicer_to_server(handler, server)
@@ -53,39 +47,31 @@ async def run():
 
   log.info("Ingestion server started", grpc_port=settings.grpc_port)
 
-  # Set up shutdown signal handling
-  shutdown_event = asyncio.Event()
+  yield
 
-  def handle_shutdown():
-    log.info("Shutdown signal received")
-    shutdown_event.set()
-
-  loop = asyncio.get_running_loop()
-  for sig in (signal.SIGTERM, signal.SIGINT):
-    loop.add_signal_handler(sig, handle_shutdown)
-
-  # Wait for shutdown signal
-  await shutdown_event.wait()
-
-  # Graceful shutdown (order matters)
-  # 1. Stop accepting new gRPC requests, allow in-flight to complete
-  # 2. Stop WebSocket connections (stops producing to Kafka)
-  # 3. Stop services
-  # 4. Stop repositories
-  # 5. Stop clients
+  # --- Shutdown (order matters) ---
   log.info("Shutting down...")
   await server.stop(grace=5)
-  await websocket_service.stop()
-  await rest_service.stop()
-  await delta_repository.stop()
+  await websocket_service.close()
+  await rest_service.close()
   await kafka_repository.stop()
-  await airflow_client.stop()
+  await airflow_client.close()
   log.info("Shutdown complete")
 
 
-def main():
-  asyncio.run(run())
+async def run():
+  """Wait for a shutdown signal."""
+  shutdown_event = asyncio.Event()
+  loop = asyncio.get_running_loop()
+  for sig in (signal.SIGTERM, signal.SIGINT):
+    loop.add_signal_handler(sig, shutdown_event.set)
+  await shutdown_event.wait()
+
+
+async def main():
+  async with lifecycle():
+    await run()
 
 
 if __name__ == "__main__":
-  main()
+  asyncio.run(main())

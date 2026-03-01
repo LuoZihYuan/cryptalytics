@@ -130,11 +130,11 @@ class WebSocketService:
     except Exception as e:
       log.error("Failed to fetch same-day candles", symbol=symbol, error=str(e))
 
-  async def stop(self):
+  async def close(self):
     for symbol in list(self.tasks.keys()):
       await self.unsubscribe(symbol)
 
     if self.tasks:
       await asyncio.gather(*self.tasks.values(), return_exceptions=True)
 
-    log.info("WebSocket service stopped")
+    log.info("WebSocket service closed")
