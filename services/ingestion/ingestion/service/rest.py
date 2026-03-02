@@ -1,13 +1,49 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import httpx
+import pyarrow as pa
 import structlog
 
 from ingestion.settings import settings
-from pylib.model.candle import Candle
-from pylib.repository.delta import DeltaRepository
+from pylib.repository.delta import DeltaRepository, CANDLE_SCHEMA
 
 log = structlog.get_logger()
+
+# Binance REST kline index -> our schema name
+KLINE_FIELDS = {
+  0: "start",
+  1: "open",
+  2: "high",
+  3: "low",
+  4: "close",
+  5: "volume",
+  6: "end",
+  8: "trades",
+}
+
+DECIMAL_COLUMNS = {"open", "high", "low", "close", "volume"}
+
+
+def klines_to_table(symbol: str, klines: list[list]) -> pa.Table:
+  """Convert raw Binance kline lists to a PyArrow table."""
+  if not klines:
+    return pa.table({f.name: pa.array([], type=f.type) for f in CANDLE_SCHEMA})
+
+  columns = {}
+  for idx, name in KLINE_FIELDS.items():
+    values = [k[idx] for k in klines]
+    target_type = CANDLE_SCHEMA.field(name).type
+    if name in DECIMAL_COLUMNS:
+      values = [Decimal(v) for v in values]
+    columns[name] = pa.array(values, type=target_type)
+
+  columns["symbol"] = pa.array(
+    [symbol] * len(klines),
+    type=CANDLE_SCHEMA.field("symbol").type,
+  )
+
+  return pa.table(columns)
 
 
 class RestService:
@@ -34,7 +70,7 @@ class RestService:
       until=now.isoformat(),
     )
 
-    candles: list[Candle] = []
+    klines: list[list] = []
     current_start = start_timestamp
 
     while current_start < until_timestamp:
@@ -54,12 +90,11 @@ class RestService:
       if not batch:
         break
 
-      for kline in batch:
-        candles.append(Candle.from_binance(symbol, kline))
-
+      klines.extend(batch)
       current_start = batch[-1][6] + 1
 
-    await self.delta_repository.save_candles(candles)
+    table = klines_to_table(symbol, klines)
+    await self.delta_repository.save_table(table)
 
-    log.info("Same-day candles saved", symbol=symbol, count=len(candles))
-    return len(candles)
+    log.info("Same-day candles saved", symbol=symbol, count=table.num_rows)
+    return table.num_rows

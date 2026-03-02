@@ -63,7 +63,7 @@ class WebSocketService:
     self.connections.pop(symbol, None)
 
     if task.cancelled():
-      log.info("Task cancelled", symbol=symbol)
+      return
     elif exc := task.exception():
       log.error("Task failed", symbol=symbol, error=str(exc))
       asyncio.create_task(self._reconnect(symbol))
@@ -79,7 +79,7 @@ class WebSocketService:
 
     async with websockets.connect(url) as ws:
       self.connections[symbol] = ws
-      log.info("Connected", symbol=symbol, url=url)
+      log.info("Connected", symbol=symbol)
 
       current_minute: int | None = None
 
@@ -87,28 +87,14 @@ class WebSocketService:
         data = json.loads(msg)
         tick = Tick.from_binance(data)
 
-        tick_minute = self._get_minute(tick.timestamp)
+        if symbol not in self.same_day_fetched:
+          tick_minute = self._get_minute(tick.timestamp)
 
-        if current_minute is None:
-          current_minute = tick_minute
-          log.info(
-            "First tick received (partial minute)",
-            symbol=symbol,
-            minute=tick_minute,
-          )
-        elif tick_minute != current_minute:
-          log.info(
-            "New minute started",
-            symbol=symbol,
-            previous=current_minute,
-            current=tick_minute,
-          )
-
-          if symbol not in self.same_day_fetched:
+          if current_minute is None:
+            current_minute = tick_minute
+          elif tick_minute != current_minute:
             await self._fetch_same_day_candles(symbol, current_minute)
             self.same_day_fetched.add(symbol)
-
-          current_minute = tick_minute
 
         await self.kafka_repository.save_tick(tick)
 
@@ -123,7 +109,6 @@ class WebSocketService:
       )
       log.info("Same-day candles fetched", symbol=symbol, count=count)
 
-      # Callback to Airflow to mark task complete
       if dag_run_id := self.pending_callbacks.pop(symbol, None):
         await self.airflow_client.mark_task_success(dag_run_id)
 
