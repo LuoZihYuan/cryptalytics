@@ -18,6 +18,7 @@ class Settings(BaseSettings):
   app_name: str = "cryptalytics-streaming"
   spark_log_level: str = "WARN"
   shuffle_partitions: int = 8
+  trigger_interval: str = "30 seconds"
 
   # Watermark & window
   watermark_delay: str = "30 seconds"

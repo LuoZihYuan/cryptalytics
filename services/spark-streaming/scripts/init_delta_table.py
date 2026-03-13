@@ -1,7 +1,7 @@
 """Create an empty Delta table with delta-spark protocol if it doesn't exist."""
 
+import os
 import pyspark
-from delta import configure_spark_with_delta_pip
 from pyspark.sql.types import DecimalType, LongType, StringType, StructField, StructType
 
 CANDLE_SCHEMA = StructType(
@@ -18,18 +18,23 @@ CANDLE_SCHEMA = StructType(
   ]
 )
 
-TABLE_PATH = "/data/delta/candles"
+TABLE_PATH = os.environ.get("DELTA_TABLE_PATH", "/data/delta/candles")
 
 builder = (
   pyspark.sql.SparkSession.builder.appName("delta-init")
+  .master("local[1]")
   .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
   .config(
     "spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog"
   )
   .config("spark.jars.ivy", "/opt/spark/.ivy2")
+  .config(
+    "spark.jars.packages",
+    "org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.2,io.delta:delta-spark_2.13:4.0.1",
+  )
+  .config("spark.ui.enabled", "false")
 )
-spark = configure_spark_with_delta_pip(builder).getOrCreate()
-spark.sparkContext.setLogLevel("WARN")
+spark = builder.getOrCreate()
 
 try:
   spark.read.format("delta").load(TABLE_PATH)
@@ -39,3 +44,4 @@ except Exception:
   print("Delta table created")
 
 spark.stop()
+os._exit(0)

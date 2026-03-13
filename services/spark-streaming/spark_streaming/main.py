@@ -1,7 +1,7 @@
 import pyspark
 import structlog
-from delta import configure_spark_with_delta_pip
 from pyspark.sql import functions as F
+from pyspark.sql.streaming import StreamingQueryListener
 
 from spark_streaming.aggregator import TICK_SCHEMA, aggregate_to_candles
 from spark_streaming.settings import settings
@@ -11,7 +11,26 @@ structlog.configure(
 )
 log = structlog.get_logger()
 
-KAFKA_PACKAGE = "org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.2"
+
+class BatchLogger(StreamingQueryListener):
+  def onQueryStarted(self, event):
+    log.info("Query started", query_id=str(event.id))
+
+  def onQueryProgress(self, event):
+    p = event.progress
+    log.info(
+      "Batch progress",
+      batch_id=p.batchId,
+      num_input_rows=p.numInputRows,
+      input_rows_per_second=round(p.inputRowsPerSecond, 2),
+      processed_rows_per_second=round(p.processedRowsPerSecond, 2),
+    )
+
+  def onQueryTerminated(self, event):
+    log.info("Query terminated", query_id=str(event.id))
+
+  def onQueryIdle(self, event):
+    pass
 
 
 def create_spark_session() -> pyspark.sql.SparkSession:
@@ -26,6 +45,10 @@ def create_spark_session() -> pyspark.sql.SparkSession:
       "org.apache.spark.sql.delta.catalog.DeltaCatalog",
     )
     .config("spark.jars.ivy", "/opt/spark/.ivy2")
+    .config(
+      "spark.jars.packages",
+      "org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.2,io.delta:delta-spark_2.13:4.0.1",
+    )
     .config("spark.sql.shuffle.partitions", settings.shuffle_partitions)
   )
 
@@ -41,14 +64,13 @@ def create_spark_session() -> pyspark.sql.SparkSession:
       )
     )
 
-  return configure_spark_with_delta_pip(
-    builder, extra_packages=[KAFKA_PACKAGE]
-  ).getOrCreate()
+  return builder.getOrCreate()
 
 
 def main():
   spark = create_spark_session()
   spark.sparkContext.setLogLevel(settings.spark_log_level)
+  spark.streams.addListener(BatchLogger())
 
   log.info(
     "Starting spark streaming",
@@ -61,7 +83,7 @@ def main():
     spark.readStream.format("kafka")
     .option("kafka.bootstrap.servers", settings.kafka_bootstrap_servers)
     .option("subscribe", settings.kafka_topic_ticks)
-    .option("startingOffsets", "latest")
+    .option("startingOffsets", "earliest")
     .option("failOnDataLoss", "false")
     .load()
   )
@@ -77,8 +99,8 @@ def main():
   query = (
     candles_df.writeStream.format("delta")
     .outputMode("append")
+    .trigger(processingTime=settings.trigger_interval)
     .option("checkpointLocation", settings.checkpoint_path)
-    .option("mergeSchema", "true")
     .start(settings.delta_candles_path)
   )
 

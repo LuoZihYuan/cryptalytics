@@ -44,11 +44,11 @@ def aggregate_to_candles(ticks_df: DataFrame) -> DataFrame:
       F.col("symbol"),
       F.unix_millis(F.col("window.start")).alias("start"),
       F.unix_millis(F.col("window.end")).alias("end"),
-      F.col("open"),
-      F.col("high"),
-      F.col("low"),
-      F.col("close"),
-      F.col("volume"),
+      F.col("open").cast(DecimalType(18, 8)),
+      F.col("high").cast(DecimalType(18, 8)),
+      F.col("low").cast(DecimalType(18, 8)),
+      F.col("close").cast(DecimalType(18, 8)),
+      F.col("volume").cast(DecimalType(18, 8)),
       F.col("trades"),
     )
   )

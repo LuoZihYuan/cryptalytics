@@ -6,7 +6,7 @@ WORKDIR /opt/spark/work-dir
 COPY services/spark-streaming/pyproject.toml services/spark-streaming/uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 RUN /opt/spark/bin/spark-submit \
-    --packages org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.2 \
+    --packages org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.2,io.delta:delta-spark_2.13:4.0.1 \
     --conf "spark.driver.extraJavaOptions=-Divy.cache.dir=/opt/spark/.ivy2 -Divy.home=/opt/spark/.ivy2" \
     --class org.apache.spark.version /dev/null 2>/dev/null; exit 0
 COPY services/spark-streaming/spark_streaming ./spark_streaming
