@@ -14,23 +14,18 @@ class Settings(BaseSettings):
   s3_access_key: str = ""
   s3_secret_key: str = ""
 
-  # Spark
-  app_name: str = "cryptalytics-streaming"
-  spark_log_level: str = "WARN"
-  shuffle_partitions: int = 8
-  trigger_interval: str = "30 seconds"
-
-  # Watermark & window
-  watermark_delay: str = "30 seconds"
-  window_duration: str = "1 minute"
+  # Flink
+  app_name: str = "tick-processor"
+  watermark_delay_ms: int = 5000
+  window_size_ms: int = 60000
 
   # Checkpoint
-  checkpoint_path: str = "s3://cryptalytics/checkpoints/spark-streaming"
+  checkpoint_path: str = "file:///data/delta/checkpoints/tick-processor"
 
   # Logging
   log_level: str = "INFO"
 
-  model_config = {"env_prefix": "SPARK_STREAMING_"}
+  model_config = {"env_prefix": "TICK_PROCESSOR_"}
 
 
 settings = Settings()

@@ -1,20 +1,27 @@
 [project]
-name = "spark-streaming"
+name = "tick-processor"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "delta-spark>=4.0.0,<4.1.0",
+    "apache-flink>=2.2.0",
     "pydantic-settings>=2.13.1",
-    "pyspark>=4.0.0,<4.1.0",
+    "pylib",
     "structlog>=25.5.0",
 ]
 
 [dependency-groups]
 dev = [
     "ruff>=0.15.4",
+    "setuptools<82",
 ]
+
+[tool.uv.extra-build-dependencies]
+apache-beam = ["setuptools"]
+
+[tool.uv.sources]
+pylib = { path = "../../shared/pylib", editable = true }
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -52,7 +59,7 @@ line-length = 88
 indent-width = 2
 
 # Assume Python 3.13
-target-version = "py313"
+target-version = "py312"
 
 [tool.ruff.lint]
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`) codes by default.
