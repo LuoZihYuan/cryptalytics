@@ -1,7 +1,7 @@
 import asyncio
 
 import structlog
-from deltalake import write_deltalake
+from deltalake import DeltaTable, write_deltalake
 import pyarrow as pa
 
 log = structlog.get_logger()
@@ -31,16 +31,32 @@ class DeltaRepository:
     if table.num_rows == 0:
       return
 
-    # Reorder columns to match schema
     table = table.select([f.name for f in CANDLE_SCHEMA])
 
     async with self._write_lock:
-      await asyncio.to_thread(
-        write_deltalake,
+      await asyncio.to_thread(self._upsert, table)
+
+    log.info("Candles saved to Delta Lake", count=table.num_rows)
+
+  def _upsert(self, table: pa.Table):
+    if not DeltaTable.is_deltatable(self.table_path, storage_options=self.storage_options):
+      write_deltalake(
         self.table_path,
         table,
         mode="append",
         storage_options=self.storage_options,
       )
+      return
 
-    log.info("Candles saved to Delta Lake", count=table.num_rows)
+    dt = DeltaTable(self.table_path, storage_options=self.storage_options)
+    (
+      dt.merge(
+        source=table,
+        predicate="t.symbol = s.symbol AND t.start = s.start",
+        source_alias="s",
+        target_alias="t",
+      )
+      .when_matched_update_all()
+      .when_not_matched_insert_all()
+      .execute()
+    )

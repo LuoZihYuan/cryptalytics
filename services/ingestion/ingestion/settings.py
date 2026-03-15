@@ -3,8 +3,11 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
   # Binance
-  binance_ws_url: str = "wss://stream.binance.us:9443/ws"
+  binance_ws_url: str = "wss://stream.binance.us:9443/stream"
   binance_rest_url: str = "https://api.binance.us/api/v3"
+
+  # Candle window
+  window_size_ms: int = 60000
 
   # Kafka
   kafka_bootstrap_servers: str = "localhost:9092"

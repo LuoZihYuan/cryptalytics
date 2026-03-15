@@ -9,7 +9,7 @@ service IngestionService {
 }
 
 message SubscribeRequest {
-  string symbol = 1;
+  repeated string symbols = 1;
   optional string dag_run_id = 2;
 }
 
@@ -19,7 +19,7 @@ message SubscribeResponse {
 }
 
 message UnsubscribeRequest {
-  string symbol = 1;
+  repeated string symbols = 1;
 }
 
 message UnsubscribeResponse {

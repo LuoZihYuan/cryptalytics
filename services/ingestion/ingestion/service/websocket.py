@@ -1,17 +1,33 @@
+from __future__ import annotations
+
 import asyncio
 import json
+from dataclasses import dataclass, field
 
 import structlog
 import websockets
-from websockets.asyncio.client import ClientConnection
 
-from ingestion.settings import settings
 from ingestion.client.airflow import AirflowClient
 from ingestion.repository.kafka import KafkaRepository
 from ingestion.service.rest import RestService
+from ingestion.settings import settings
 from pylib.model.tick import Tick
 
 log = structlog.get_logger()
+
+MAX_STREAMS_PER_CONNECTION = 1024
+
+
+@dataclass(eq=False)
+class Bucket:
+  symbols: set[str] = field(default_factory=set)
+  ws: websockets.asyncio.client.ClientConnection | None = None
+  task: asyncio.Task | None = None
+  _msg_id: int = 0
+
+  def next_id(self) -> int:
+    self._msg_id += 1
+    return self._msg_id
 
 
 class WebSocketService:
@@ -24,79 +40,132 @@ class WebSocketService:
     self.kafka_repository = kafka_repository
     self.rest_service = rest_service
     self.airflow_client = airflow_client
-    self.connections: dict[str, ClientConnection] = {}
-    self.tasks: dict[str, asyncio.Task] = {}
+    self._buckets: list[Bucket] = []
+    self._symbol_to_bucket: dict[str, Bucket] = {}
     self.same_day_fetched: set[str] = set()
     self.pending_callbacks: dict[str, str] = {}  # symbol -> dag_run_id
+    self._first_tick_minute: dict[str, int] = {}  # symbol -> minute of first tick
 
-  async def subscribe(self, symbol: str, dag_run_id: str | None = None):
-    if symbol in self.tasks:
-      log.warning("Already subscribed", symbol=symbol)
+  async def subscribe(self, symbols: list[str], dag_run_id: str | None = None):
+    new_symbols = [s for s in symbols if s not in self._symbol_to_bucket]
+    already = [s for s in symbols if s in self._symbol_to_bucket]
+
+    if already:
+      log.warning("Already subscribed", symbols=already)
+
+    if not new_symbols:
       return
 
     if dag_run_id:
-      self.pending_callbacks[symbol] = dag_run_id
+      for symbol in new_symbols:
+        self.pending_callbacks[symbol] = dag_run_id
 
-    task = asyncio.create_task(
-      self._handle_symbol(symbol),
-      name=f"ws-{symbol}",
-    )
-    self.tasks[symbol] = task
-    task.add_done_callback(lambda t: self._on_task_done(symbol, t))
-    log.info("Subscribed", symbol=symbol, dag_run_id=dag_run_id)
+    added: dict[Bucket, list[str]] = {}
+    for symbol in new_symbols:
+      bucket = next(
+        (b for b in self._buckets if len(b.symbols) < MAX_STREAMS_PER_CONNECTION),
+        None,
+      )
+      if bucket is None:
+        bucket = Bucket()
+        self._buckets.append(bucket)
+        bucket.task = asyncio.create_task(
+          self._receive_loop(bucket),
+          name=f"ws-bucket-{len(self._buckets)}",
+        )
+
+      bucket.symbols.add(symbol)
+      self._symbol_to_bucket[symbol] = bucket
+      added.setdefault(bucket, []).append(symbol)
+
+    for bucket, syms in added.items():
+      if bucket.ws is not None:
+        await self._send_subscribe(bucket, syms)
+
+    log.info("Subscribed", symbols=new_symbols, dag_run_id=dag_run_id)
 
   async def unsubscribe(self, symbol: str):
-    if symbol not in self.tasks:
+    bucket = self._symbol_to_bucket.pop(symbol, None)
+    if bucket is None:
       log.warning("Not subscribed", symbol=symbol)
       return
 
-    self.tasks[symbol].cancel()
+    bucket.symbols.discard(symbol)
     self.same_day_fetched.discard(symbol)
     self.pending_callbacks.pop(symbol, None)
+    self._first_tick_minute.pop(symbol, None)
+
+    if bucket.ws is not None:
+      await self._send_unsubscribe(bucket, [symbol])
+
+    if not bucket.symbols and bucket.task:
+      bucket.task.cancel()
+      self._buckets.remove(bucket)
+
     log.info("Unsubscribed", symbol=symbol)
 
   def list_subscriptions(self) -> list[str]:
-    return list(self.tasks.keys())
+    return list(self._symbol_to_bucket.keys())
 
-  def _on_task_done(self, symbol: str, task: asyncio.Task):
-    self.tasks.pop(symbol, None)
-    self.connections.pop(symbol, None)
+  async def _send_subscribe(self, bucket: Bucket, symbols: list[str]):
+    await bucket.ws.send(json.dumps({
+      "method": "SUBSCRIBE",
+      "params": [f"{s.lower()}@trade" for s in symbols],
+      "id": bucket.next_id(),
+    }))
 
-    if task.cancelled():
-      return
-    elif exc := task.exception():
-      log.error("Task failed", symbol=symbol, error=str(exc))
-      asyncio.create_task(self._reconnect(symbol))
+  async def _send_unsubscribe(self, bucket: Bucket, symbols: list[str]):
+    await bucket.ws.send(json.dumps({
+      "method": "UNSUBSCRIBE",
+      "params": [f"{s.lower()}@trade" for s in symbols],
+      "id": bucket.next_id(),
+    }))
 
-  async def _reconnect(self, symbol: str, delay: int = 5):
-    log.info("Reconnecting", symbol=symbol, delay=delay)
-    await asyncio.sleep(delay)
-    await self.subscribe(symbol)
+  async def _receive_loop(self, bucket: Bucket):
+    backoff = 1
+    while True:
+      try:
+        async with websockets.connect(settings.binance_ws_url) as ws:
+          bucket.ws = ws
+          backoff = 1
+          if bucket.symbols:
+            await self._send_subscribe(bucket, list(bucket.symbols))
+          log.info("Connected", streams=len(bucket.symbols))
 
-  async def _handle_symbol(self, symbol: str):
-    stream = f"{symbol.lower()}@trade"
-    url = f"{settings.binance_ws_url}/{stream}"
+          async for raw in ws:
+            msg = json.loads(raw)
+            if "stream" not in msg:
+              continue
+            await self._handle_message(msg["stream"], msg["data"])
 
-    async with websockets.connect(url) as ws:
-      self.connections[symbol] = ws
-      log.info("Connected", symbol=symbol)
+      except asyncio.CancelledError:
+        break
+      except Exception as e:
+        log.error("WebSocket error, reconnecting", error=str(e), backoff=backoff)
+        for symbol in bucket.symbols:
+          self.same_day_fetched.discard(symbol)
+          self._first_tick_minute.pop(symbol, None)
+        bucket.ws = None
+        await asyncio.sleep(backoff)
+        backoff = min(backoff * 2, 60)
 
-      current_minute: int | None = None
+    bucket.ws = None
 
-      async for msg in ws:
-        data = json.loads(msg)
-        tick = Tick.from_binance(data)
+  async def _handle_message(self, stream: str, data: dict):
+    symbol = stream.split("@")[0].upper()
+    tick = Tick.from_binance(data)
 
-        if symbol not in self.same_day_fetched:
-          tick_minute = self._get_minute(tick.timestamp)
+    if symbol not in self.same_day_fetched:
+      tick_minute = self._get_minute(tick.timestamp)
+      first_minute = self._first_tick_minute.get(symbol)
 
-          if current_minute is None:
-            current_minute = tick_minute
-          elif tick_minute != current_minute:
-            await self._fetch_same_day_candles(symbol, current_minute)
-            self.same_day_fetched.add(symbol)
+      if first_minute is None:
+        self._first_tick_minute[symbol] = tick_minute
+      elif tick_minute >= first_minute + 2 * settings.window_size_ms:
+        await self._fetch_same_day_candles(symbol, tick_minute)
+        self.same_day_fetched.add(symbol)
 
-        await self.kafka_repository.save_tick(tick)
+    await self.kafka_repository.save_tick(tick)
 
   def _get_minute(self, timestamp_ms: int) -> int:
     return (timestamp_ms // 60000) * 60000
@@ -116,10 +185,12 @@ class WebSocketService:
       log.error("Failed to fetch same-day candles", symbol=symbol, error=str(e))
 
   async def close(self):
-    for symbol in list(self.tasks.keys()):
-      await self.unsubscribe(symbol)
+    for bucket in list(self._buckets):
+      if bucket.task:
+        bucket.task.cancel()
 
-    if self.tasks:
-      await asyncio.gather(*self.tasks.values(), return_exceptions=True)
+    tasks = [b.task for b in self._buckets if b.task]
+    if tasks:
+      await asyncio.gather(*tasks, return_exceptions=True)
 
     log.info("WebSocket service closed")
