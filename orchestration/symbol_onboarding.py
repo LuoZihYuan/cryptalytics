@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 import httpx
+from airflow.models import Variable
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from airflow.providers.grpc.operators.grpc import GrpcOperator
 from airflow.sdk import DAG, BaseSensorOperator, Param, task
@@ -126,6 +127,7 @@ with DAG(
     task_id="backfill",
     namespace="cryptalytics",
     image="cryptalytics/backfill:latest",
+    image_pull_policy=Variable.get("image_pull_policy", default_var="IfNotPresent"),
     arguments=[
       "--symbol",
       "{{ params.symbol }}",
