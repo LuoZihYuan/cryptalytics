@@ -1,0 +1,39 @@
+# Secrets and Credentials (CRITICAL)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*kubeconfig*
+.env
+.env.*
+secrets.yaml
+*-secret.yaml
+
+# Helm (Package Manager)
+*.tgz
+charts/
+requirements.lock
+Chart.lock
+
+# Kustomize 
+kustomize-build-output.yaml
+
+# Local Clusters & Tooling
+.minikube/
+.kind/
+.k3d/
+.vagrant/
+
+# Skaffold / Tilt / DevSpace (Iterative Dev Tools)
+.skaffold/
+tilt_modules/
+.devspace/
+
+# Terraform (Infrastructure as Code)
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+crash.log

@@ -1,0 +1,129 @@
+images:
+  airflow:
+    repository: cryptalytics/airflow
+    tag: latest
+    pullPolicy: Never
+
+executor: KubernetesExecutor
+
+data:
+  metadataSecretName: ~
+  metadataConnection:
+    user: postgres
+    pass: airflow
+    protocol: postgresql
+    host: airflow-postgresql.cryptalytics
+    port: 5432
+    db: airflow
+
+apiServer:
+  replicas: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "500m"
+  startupProbe:
+    failureThreshold: 30
+    periodSeconds: 10
+  livenessProbe:
+    initialDelaySeconds: 30
+    timeoutSeconds: 30
+    periodSeconds: 15
+    failureThreshold: 10
+  readinessProbe:
+    initialDelaySeconds: 30
+    timeoutSeconds: 30
+    periodSeconds: 15
+    failureThreshold: 10
+
+scheduler:
+  replicas: 1
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "500m"
+  startupProbe:
+    failureThreshold: 30
+    periodSeconds: 10
+    timeoutSeconds: 60
+  livenessProbe:
+    initialDelaySeconds: 30
+    timeoutSeconds: 60
+    periodSeconds: 30
+    failureThreshold: 10
+
+dagProcessor:
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "500m"
+
+triggerer:
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "500m"
+  livenessProbe:
+    initialDelaySeconds: 30
+    timeoutSeconds: 60
+    periodSeconds: 30
+    failureThreshold: 10
+
+workers:
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: airflow
+    database: airflow
+
+redis:
+  enabled: false
+
+dags:
+  gitSync:
+    enabled: true
+    repo: https://github.com/LuoZihYuan/cryptalytics.git
+    branch: main
+    subPath: orchestration
+
+config:
+  core:
+    load_examples: "False"
+  kubernetes_executor:
+    namespace: "cryptalytics"
+    delete_worker_pods: "True"
+    delete_worker_pods_on_failure: "False"
+
+connections:
+  - id: ingestion_grpc
+    type: grpc
+    host: ingestion
+    port: 50051
+    extra: '{"auth_type": "NO_AUTH"}'
+
+variables:
+  - key: mongo_uri
+    value: "mongodb://mongodb:27017/cryptalytics"
+
+serviceAccount:
+  name: airflow-worker

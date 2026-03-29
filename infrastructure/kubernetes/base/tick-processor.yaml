@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tick-processor
+  namespace: cryptalytics
+  labels:
+    app: tick-processor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tick-processor
+  template:
+    metadata:
+      labels:
+        app: tick-processor
+    spec:
+      containers:
+        - name: tick-processor
+          image: cryptalytics/tick-processor:latest
+          env:
+            - name: TICK_PROCESSOR_KAFKA_BOOTSTRAP_SERVERS
+              value: ""
+            - name: TICK_PROCESSOR_DELTA_CANDLES_PATH
+              value: ""
+            - name: TICK_PROCESSOR_CHECKPOINT_PATH
+              value: ""
+          envFrom:
+            - secretRef:
+                name: tick-processor-secrets
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "500m"

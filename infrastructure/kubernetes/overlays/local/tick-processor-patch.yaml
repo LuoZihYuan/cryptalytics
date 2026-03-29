@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tick-processor
+  namespace: cryptalytics
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: init
+          image: busybox
+          command: ["sh", "-c", "until nc -z kafka 9092; do echo 'waiting for kafka...'; sleep 2; done && mkdir -p /data/delta/candles /data/delta/checkpoints && chown -R 999:999 /data/delta && chmod -R 775 /data/delta"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: delta-data
+              mountPath: /data/delta
+      containers:
+        - name: tick-processor
+          imagePullPolicy: Never
+          env:
+            - name: TICK_PROCESSOR_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: TICK_PROCESSOR_DELTA_CANDLES_PATH
+              value: "/data/delta/candles"
+            - name: TICK_PROCESSOR_CHECKPOINT_PATH
+              value: "file:///data/delta/checkpoints/tick-processor"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xmx512m -Xms256m"
+          volumeMounts:
+            - name: delta-data
+              mountPath: /data/delta
+      volumes:
+        - name: delta-data
+          persistentVolumeClaim:
+            claimName: delta-data

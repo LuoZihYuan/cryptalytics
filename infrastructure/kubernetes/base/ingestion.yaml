@@ -22,11 +22,11 @@ spec:
             - containerPort: 50051
           env:
             - name: INGESTION_BINANCE_WS_URL
-              value: "wss://stream.binance.us:9443/ws"
+              value: "wss://stream.binance.us:9443/stream"
             - name: INGESTION_BINANCE_REST_URL
               value: "https://api.binance.us/api/v3"
             - name: INGESTION_KAFKA_BOOTSTRAP_SERVERS
-              value: "kafka:9092"
+              value: ""
             - name: INGESTION_DELTA_CANDLES_PATH
               value: "s3://cryptalytics/candles"
           envFrom:

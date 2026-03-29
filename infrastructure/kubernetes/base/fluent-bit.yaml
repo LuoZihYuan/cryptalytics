@@ -57,12 +57,8 @@ data:
         K8S-Logging.Parser  On
 
     [OUTPUT]
-        Name              cloudwatch_logs
-        Match             *
-        region            us-west-2
-        log_group_name    /cryptalytics/containers
-        log_stream_prefix from-fluent-bit-
-        auto_create_group true
+        Name    stdout
+        Match   *
 
   parsers.conf: |
     [PARSER]

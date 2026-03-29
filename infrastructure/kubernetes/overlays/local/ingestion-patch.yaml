@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion
+  namespace: cryptalytics
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: init
+          image: busybox
+          command: ["sh", "-c", "until nc -z kafka 9092; do echo 'waiting for kafka...'; sleep 2; done"]
+      containers:
+        - name: ingestion
+          imagePullPolicy: Never
+          env:
+            - name: INGESTION_KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"

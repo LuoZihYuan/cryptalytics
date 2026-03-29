@@ -1,0 +1,101 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cryptalytics
+resources:
+  - ../../base
+  - delta-storage.yaml
+  - kafka.yaml
+patches:
+  - path: ingestion-patch.yaml
+  - path: tick-processor-patch.yaml
+  # Fix kustomize 5.8.x namespace bug for Helm-generated resources
+  - target:
+      kind: (ConfigMap|ServiceAccount|Deployment|StatefulSet|Job|Service|PodDisruptionBudget|NetworkPolicy|Secret|Role|RoleBinding)
+    patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: cryptalytics
+  # Disable MongoDB probes for local dev
+  - target:
+      kind: Deployment
+      name: mongodb
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: mongodb
+      spec:
+        template:
+          spec:
+            containers:
+              - name: mongodb
+                livenessProbe: null
+                readinessProbe: null
+  # Disable Airflow api-server probes for local dev
+  - target:
+      kind: Deployment
+      name: airflow-api-server
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: airflow-api-server
+      spec:
+        template:
+          spec:
+            containers:
+              - name: api-server
+                startupProbe: null
+                livenessProbe: null
+                readinessProbe: null
+  # Disable Airflow scheduler probes for local dev
+  - target:
+      kind: Deployment
+      name: airflow-scheduler
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: airflow-scheduler
+      spec:
+        template:
+          spec:
+            containers:
+              - name: scheduler
+                startupProbe: null
+                livenessProbe: null
+                readinessProbe: null
+  # Disable Airflow dag-processor probes for local dev
+  - target:
+      kind: Deployment
+      name: airflow-dag-processor
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: airflow-dag-processor
+      spec:
+        template:
+          spec:
+            containers:
+              - name: dag-processor
+                startupProbe: null
+                livenessProbe: null
+                readinessProbe: null
+  # Disable Airflow triggerer probes for local dev
+  - target:
+      kind: StatefulSet
+      name: airflow-triggerer
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: airflow-triggerer
+      spec:
+        template:
+          spec:
+            containers:
+              - name: triggerer
+                startupProbe: null
+                livenessProbe: null
+                readinessProbe: null
