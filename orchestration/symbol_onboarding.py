@@ -1,10 +1,9 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from airflow import DAG
-from airflow.decorators import task
-from airflow.models import Param
+import httpx
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from airflow.providers.grpc.operators.grpc import GrpcOperator
+from airflow.sdk import DAG, BaseSensorOperator, Param, task
 from pymongo import MongoClient
 
 default_args = {
@@ -12,6 +11,22 @@ default_args = {
   "retries": 3,
   "retry_delay": timedelta(minutes=5),
 }
+
+
+class ExternalCallbackSensor(BaseSensorOperator):
+  """
+  Sensor that waits for external service to mark it as success via Airflow REST API.
+
+  The sensor keeps returning False (waiting). An external service calls:
+  PATCH /api/v1/dags/{dag_id}/dagRuns/{run_id}/taskInstances/{task_id}
+  with {"new_state": "success"} to complete the task.
+
+  Uses mode="reschedule" to release worker slot between pokes.
+  """
+
+  def poke(self, context):
+    return False
+
 
 with DAG(
   dag_id="symbol_onboarding",
@@ -22,8 +37,6 @@ with DAG(
   catchup=False,
   params={
     "symbol": Param("BTCUSDT", type="string", description="Trading pair"),
-    "start_date": Param("2026-01-01", type="string", description="Backfill start date"),
-    "end_date": Param("2026-01-07", type="string", description="Backfill end date"),
   },
 ) as dag:
 
@@ -39,22 +52,35 @@ with DAG(
     client.close()
 
   @task
-  def build_backfill_args(symbol: str, start_date: str, end_date: str) -> list[dict]:
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    args = []
-    current = start
-    while current <= end:
-      date = current.strftime("%Y-%m-%d")
-      args.append(
-        {
-          "name": f"backfill-{symbol.lower()}-{date}",
-          "arguments": ["--symbol", symbol, "--date", date],
-          "labels": {"app": "backfill", "symbol": symbol, "date": date},
-        }
+  def get_backfill_dates(symbol: str) -> dict:
+    """
+    Fetch the earliest available candle date from Binance.
+    Returns start_date (inclusive) and end_date (exclusive, today UTC).
+    """
+    with httpx.Client() as client:
+      response = client.get(
+        "https://api.binance.us/api/v3/klines",
+        params={
+          "symbol": symbol,
+          "interval": "1m",
+          "limit": 1,
+          "startTime": 0,
+        },
       )
-      current += timedelta(days=1)
-    return args
+      response.raise_for_status()
+      data = response.json()
+
+      if not data:
+        raise ValueError(f"No data found for {symbol}")
+
+      earliest_timestamp = data[0][0]
+      start_date = datetime.fromtimestamp(
+        earliest_timestamp / 1000, tz=timezone.utc
+      ).strftime("%Y-%m-%d")
+
+    end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    return {"start_date": start_date, "end_date": end_date}
 
   @task
   def mark_symbol_available(symbol: str, mongo_uri: str):
@@ -66,40 +92,64 @@ with DAG(
     )
     client.close()
 
-  subscribe_symbol = GrpcOperator(
-    task_id="subscribe_symbol",
-    stub_class="ingestion_pb2_grpc.IngestionServiceStub",
-    call_func="Subscribe",
-    grpc_conn_id="ingestion_grpc",
-    data={"symbol": "{{ params.symbol }}"},
-  )
-
+  # Step 1: Mark symbol as unavailable
   mark_unavailable = mark_symbol_unavailable(
     symbol="{{ params.symbol }}",
     mongo_uri="{{ var.value.mongo_uri }}",
   )
 
-  backfill_args = build_backfill_args(
-    symbol="{{ params.symbol }}",
-    start_date="{{ params.start_date }}",
-    end_date="{{ params.end_date }}",
+  # Step 2.1a: Subscribe to real-time data (returns immediately)
+  subscribe_symbol = GrpcOperator(
+    task_id="subscribe_symbol",
+    stub_class="ingestion_pb2_grpc.IngestionServiceStub",
+    call_func="Subscribe",
+    grpc_conn_id="ingestion_grpc",
+    data={
+      "symbols": ["{{ params.symbol }}"],
+      "dag_run_id": "{{ run_id }}",
+    },
   )
 
-  backfill = KubernetesPodOperator.partial(
+  # Step 2.1b: Wait for ingestion service to call back via REST API
+  realtime_ready = ExternalCallbackSensor(
+    task_id="realtime_ready",
+    mode="reschedule",
+    poke_interval=60,
+    timeout=600,
+  )
+
+  # Step 2.2: Get backfill date range
+  backfill_dates = get_backfill_dates(symbol="{{ params.symbol }}")
+
+  # Step 2.3: Backfill historical data
+  backfill = KubernetesPodOperator(
     task_id="backfill",
     namespace="cryptalytics",
     image="cryptalytics/backfill:latest",
+    arguments=[
+      "--symbol",
+      "{{ params.symbol }}",
+      "--start-date",
+      "{{ ti.xcom_pull(task_ids='get_backfill_dates')['start_date'] }}",
+      "--end-date",
+      "{{ ti.xcom_pull(task_ids='get_backfill_dates')['end_date'] }}",
+    ],
     container_resources={
-      "requests": {"memory": "256Mi", "cpu": "100m"},
-      "limits": {"memory": "512Mi", "cpu": "500m"},
+      "requests": {"memory": "512Mi", "cpu": "250m"},
+      "limits": {"memory": "1Gi", "cpu": "500m"},
     },
     is_delete_operator_pod=True,
     get_logs=True,
-  ).expand_kwargs(backfill_args)
+  )
 
+  # Step 4: Mark symbol as available
   mark_available = mark_symbol_available(
     symbol="{{ params.symbol }}",
     mongo_uri="{{ var.value.mongo_uri }}",
   )
 
-  mark_unavailable >> [subscribe_symbol, backfill] >> mark_available
+  # Dependencies
+  mark_unavailable >> [subscribe_symbol, backfill_dates]
+  subscribe_symbol >> realtime_ready
+  backfill_dates >> backfill
+  [realtime_ready, backfill] >> mark_available
