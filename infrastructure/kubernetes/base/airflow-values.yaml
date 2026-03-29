@@ -4,6 +4,12 @@ images:
     tag: latest
     pullPolicy: Never
 
+env:
+  - name: "AIRFLOW_VAR_MONGO_URI"
+    value: "mongodb://mongodb:27017/cryptalytics"
+  - name: "AIRFLOW_CONN_INGESTION_GRPC"
+    value: "grpc://ingestion:50051?extra__grpc__auth_type=NO_AUTH"
+
 executor: KubernetesExecutor
 
 data:
@@ -84,10 +90,10 @@ triggerer:
 workers:
   resources:
     requests:
-      memory: "256Mi"
-      cpu: "100m"
-    limits:
       memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
       cpu: "500m"
 
 postgresql:
@@ -109,6 +115,7 @@ dags:
 config:
   core:
     load_examples: "False"
+    dagbag_import_timeout: "120"
   kubernetes_executor:
     namespace: "cryptalytics"
     delete_worker_pods: "True"
@@ -120,10 +127,6 @@ connections:
     host: ingestion
     port: 50051
     extra: '{"auth_type": "NO_AUTH"}'
-
-variables:
-  - key: mongo_uri
-    value: "mongodb://mongodb:27017/cryptalytics"
 
 serviceAccount:
   name: airflow-worker
