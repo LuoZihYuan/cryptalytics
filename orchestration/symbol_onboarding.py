@@ -1,13 +1,14 @@
 from datetime import datetime, timedelta, timezone
 
+import grpc
 import httpx
 from airflow.models import Variable
 from kubernetes.client import models as k8s
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
-from airflow.providers.grpc.hooks.grpc import GrpcHook
 from airflow.sdk import DAG, BaseSensorOperator, Param, task
 from pymongo import MongoClient
 
+import ingestion_pb2
 import ingestion_pb2_grpc
 
 default_args = {
@@ -89,14 +90,15 @@ with DAG(
   @task
   def subscribe_symbol(symbol: str, dag_run_id: str):
     """Subscribe to real-time data via gRPC."""
-    hook = GrpcHook(grpc_conn_id="ingestion_grpc")
-    responses = hook.run(
-      ingestion_pb2_grpc.IngestionServiceStub,
-      "Subscribe",
-      data={"symbols": [symbol], "dag_run_id": dag_run_id},
+    channel = grpc.insecure_channel("ingestion:50051")
+    stub = ingestion_pb2_grpc.IngestionServiceStub(channel)
+    request = ingestion_pb2.SubscribeRequest(
+      symbols=[symbol],
+      dag_run_id=dag_run_id,
     )
-    for response in responses:
-      pass
+    response = stub.Subscribe(request)
+    channel.close()
+    return {"success": response.success, "message": response.message}
 
   @task
   def mark_symbol_available(symbol: str, mongo_uri: str):
