@@ -9,6 +9,8 @@ env:
     value: "mongodb://mongodb:27017/cryptalytics"
   - name: "AIRFLOW_VAR_IMAGE_PULL_POLICY"
     value: "Never"
+  - name: "AIRFLOW_VAR_DELTA_CANDLES_PATH"
+    value: "/data/delta/candles"
   - name: "AIRFLOW_CONN_INGESTION_GRPC"
     value: "grpc://ingestion:50051?extra__grpc__auth_type=NO_AUTH"
 

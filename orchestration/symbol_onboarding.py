@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from airflow.models import Variable
+from kubernetes.client import models as k8s
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
 from airflow.providers.grpc.operators.grpc import GrpcOperator
 from airflow.sdk import DAG, BaseSensorOperator, Param, task
@@ -128,6 +129,28 @@ with DAG(
     namespace="cryptalytics",
     image="cryptalytics/backfill:latest",
     image_pull_policy=Variable.get("image_pull_policy", default_var="IfNotPresent"),
+    env_vars=[
+      k8s.V1EnvVar(
+        name="BACKFILL_DELTA_CANDLES_PATH",
+        value=Variable.get(
+          "delta_candles_path", default_var="s3://cryptalytics/candles"
+        ),
+      ),
+    ],
+    volumes=[
+      k8s.V1Volume(
+        name="delta-data",
+        persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
+          claim_name="delta-data",
+        ),
+      ),
+    ],
+    volume_mounts=[
+      k8s.V1VolumeMount(
+        name="delta-data",
+        mount_path="/data/delta",
+      ),
+    ],
     arguments=[
       "--symbol",
       "{{ params.symbol }}",
