@@ -5,8 +5,8 @@ from contextlib import asynccontextmanager
 import structlog
 from grpc import aio
 
+from pb import ingestion_pb2_grpc
 from ingestion.settings import settings
-from ingestion.pb import ingestion_pb2_grpc
 from ingestion.handler.ingestion import IngestionHandler
 from ingestion.client.airflow import AirflowClient
 from ingestion.repository.kafka import KafkaRepository

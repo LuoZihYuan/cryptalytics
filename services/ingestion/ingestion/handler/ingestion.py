@@ -1,6 +1,6 @@
 import structlog
 
-from ingestion.pb import ingestion_pb2, ingestion_pb2_grpc
+from pb import ingestion_pb2, ingestion_pb2_grpc
 from ingestion.service.websocket import WebSocketService
 
 log = structlog.get_logger()

@@ -8,6 +8,8 @@ from airflow.providers.grpc.operators.grpc import GrpcOperator
 from airflow.sdk import DAG, BaseSensorOperator, Param, task
 from pymongo import MongoClient
 
+import ingestion_pb2_grpc
+
 default_args = {
   "owner": "cryptalytics",
   "retries": 3,
@@ -103,7 +105,7 @@ with DAG(
   # Step 2.1a: Subscribe to real-time data (returns immediately)
   subscribe_symbol = GrpcOperator(
     task_id="subscribe_symbol",
-    stub_class="ingestion_pb2_grpc.IngestionServiceStub",
+    stub_class=ingestion_pb2_grpc.IngestionServiceStub,
     call_func="Subscribe",
     grpc_conn_id="ingestion_grpc",
     data={

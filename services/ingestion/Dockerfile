@@ -7,8 +7,9 @@ ENV UV_NO_DEV=1
 ENV UV_PYTHON_DOWNLOADS=0
 WORKDIR /app/services/ingestion
 COPY shared/pylib /app/shared/pylib
+COPY shared/pb /app/shared/pb
 COPY services/ingestion/pyproject.toml services/ingestion/uv.lock ./
-# Remove editable flag so pylib is copied to site-packages, not symlinked
+# Remove editable flag so shared packages are copied to site-packages, not symlinked
 RUN sed -i 's/, editable = true//' pyproject.toml
 # Install dependencies only (cached layer)
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -22,7 +23,7 @@ FROM python:3.13-slim-bookworm
 RUN groupadd --system --gid 999 nonroot \
  && useradd --system --gid 999 --uid 999 --create-home nonroot
 COPY --from=builder --chown=nonroot:nonroot /app/services/ingestion /app
-COPY --from=builder --chown=nonroot:nonroot /app/shared/pylib /app/shared/pylib
+COPY --from=builder --chown=nonroot:nonroot /app/shared /app/shared
 RUN mkdir -p /data/delta && chmod 777 /data/delta
 ENV PATH="/app/.venv/bin:$PATH"
 USER nonroot

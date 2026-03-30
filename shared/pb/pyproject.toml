@@ -1,0 +1,21 @@
+[project]
+name = "pb"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "LuoZihYuan", email = "zihyuan.luo@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "grpcio>=1.78.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "grpcio-tools>=1.78.0",
+]
