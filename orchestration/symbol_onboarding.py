@@ -4,7 +4,7 @@ import httpx
 from airflow.models import Variable
 from kubernetes.client import models as k8s
 from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
-from airflow.providers.grpc.operators.grpc import GrpcOperator
+from airflow.providers.grpc.hooks.grpc import GrpcHook
 from airflow.sdk import DAG, BaseSensorOperator, Param, task
 from pymongo import MongoClient
 
@@ -87,6 +87,18 @@ with DAG(
     return {"start_date": start_date, "end_date": end_date}
 
   @task
+  def subscribe_symbol(symbol: str, dag_run_id: str):
+    """Subscribe to real-time data via gRPC."""
+    hook = GrpcHook(grpc_conn_id="ingestion_grpc")
+    responses = hook.run(
+      ingestion_pb2_grpc.IngestionServiceStub,
+      "Subscribe",
+      data={"symbols": [symbol], "dag_run_id": dag_run_id},
+    )
+    for response in responses:
+      pass
+
+  @task
   def mark_symbol_available(symbol: str, mongo_uri: str):
     client = MongoClient(mongo_uri)
     db = client.cryptalytics
@@ -103,15 +115,9 @@ with DAG(
   )
 
   # Step 2.1a: Subscribe to real-time data (returns immediately)
-  subscribe_symbol = GrpcOperator(
-    task_id="subscribe_symbol",
-    stub_class=ingestion_pb2_grpc.IngestionServiceStub,
-    call_func="Subscribe",
-    grpc_conn_id="ingestion_grpc",
-    data={
-      "symbols": ["{{ params.symbol }}"],
-      "dag_run_id": "{{ run_id }}",
-    },
+  subscribe = subscribe_symbol(
+    symbol="{{ params.symbol }}",
+    dag_run_id="{{ run_id }}",
   )
 
   # Step 2.1b: Wait for ingestion service to call back via REST API
@@ -176,7 +182,7 @@ with DAG(
   )
 
   # Dependencies
-  mark_unavailable >> [subscribe_symbol, backfill_dates]
-  subscribe_symbol >> realtime_ready
+  mark_unavailable >> [subscribe, backfill_dates]
+  subscribe >> realtime_ready
   backfill_dates >> backfill
   [realtime_ready, backfill] >> mark_available
