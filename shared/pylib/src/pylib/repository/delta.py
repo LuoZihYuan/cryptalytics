@@ -1,7 +1,7 @@
 import asyncio
 
 import structlog
-from deltalake import write_deltalake
+from deltalake import DeltaTable, write_deltalake
 import pyarrow as pa
 
 log = structlog.get_logger()
@@ -39,10 +39,14 @@ class DeltaRepository:
     log.info("Candles saved to Delta Lake", count=table.num_rows)
 
   def _append(self, table: pa.Table):
+    is_new = not DeltaTable.is_deltatable(
+      self.table_path, storage_options=self.storage_options
+    )
+
     write_deltalake(
       self.table_path,
       table,
       mode="append",
-      configuration=TABLE_CONFIG,
+      configuration=TABLE_CONFIG if is_new else None,
       storage_options=self.storage_options,
     )
