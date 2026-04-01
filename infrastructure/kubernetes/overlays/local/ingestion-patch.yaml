@@ -16,3 +16,14 @@ spec:
           env:
             - name: INGESTION_KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
+            - name: INGESTION_DELTA_CANDLES_PATH
+              value: "/data/delta/candles"
+            - name: INGESTION_AIRFLOW_BASE_URL
+              value: "http://airflow-api-server:8080"
+          volumeMounts:
+            - name: delta-data
+              mountPath: /data/delta
+      volumes:
+        - name: delta-data
+          persistentVolumeClaim:
+            claimName: delta-data
