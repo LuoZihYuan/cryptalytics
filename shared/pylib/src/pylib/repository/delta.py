@@ -1,7 +1,7 @@
 import asyncio
 
 import structlog
-from deltalake import DeltaTable, write_deltalake
+from deltalake import write_deltalake
 import pyarrow as pa
 
 log = structlog.get_logger()
@@ -20,43 +20,29 @@ CANDLE_SCHEMA = pa.schema(
   ]
 )
 
+TABLE_CONFIG = {
+  "delta.isolationLevel": "SnapshotIsolation",
+}
+
 
 class DeltaRepository:
   def __init__(self, table_path: str, storage_options: dict | None = None):
     self.table_path = table_path
     self.storage_options = storage_options or {}
-    self._write_lock = asyncio.Lock()
 
   async def save_table(self, table: pa.Table):
     if table.num_rows == 0:
       return
 
     table = table.select([f.name for f in CANDLE_SCHEMA])
-
-    async with self._write_lock:
-      await asyncio.to_thread(self._upsert, table)
-
+    await asyncio.to_thread(self._append, table)
     log.info("Candles saved to Delta Lake", count=table.num_rows)
 
-  def _upsert(self, table: pa.Table):
-    if not DeltaTable.is_deltatable(self.table_path, storage_options=self.storage_options):
-      write_deltalake(
-        self.table_path,
-        table,
-        mode="append",
-        storage_options=self.storage_options,
-      )
-      return
-
-    dt = DeltaTable(self.table_path, storage_options=self.storage_options)
-    (
-      dt.merge(
-        source=table,
-        predicate="t.symbol = s.symbol AND t.start = s.start",
-        source_alias="s",
-        target_alias="t",
-      )
-      .when_matched_update_all()
-      .when_not_matched_insert_all()
-      .execute()
+  def _append(self, table: pa.Table):
+    write_deltalake(
+      self.table_path,
+      table,
+      mode="append",
+      configuration=TABLE_CONFIG,
+      storage_options=self.storage_options,
     )
