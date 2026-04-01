@@ -58,11 +58,7 @@ async def download_file(
           )
         else:
           raise
-      except (
-        httpx.TimeoutException,
-        httpx.ConnectError,
-        httpx.RemoteProtocolError,
-      ) as e:
+      except httpx.TransportError as e:
         if attempt < max_retries - 1:
           log.warning("Network error, retrying", url=url, error=str(e))
         else:
