@@ -108,18 +108,26 @@ class WebSocketService:
     return list(self._symbol_to_bucket.keys())
 
   async def _send_subscribe(self, bucket: Bucket, symbols: list[str]):
-    await bucket.ws.send(json.dumps({
-      "method": "SUBSCRIBE",
-      "params": [f"{s.lower()}@trade" for s in symbols],
-      "id": bucket.next_id(),
-    }))
+    await bucket.ws.send(
+      json.dumps(
+        {
+          "method": "SUBSCRIBE",
+          "params": [f"{s.lower()}@trade" for s in symbols],
+          "id": bucket.next_id(),
+        }
+      )
+    )
 
   async def _send_unsubscribe(self, bucket: Bucket, symbols: list[str]):
-    await bucket.ws.send(json.dumps({
-      "method": "UNSUBSCRIBE",
-      "params": [f"{s.lower()}@trade" for s in symbols],
-      "id": bucket.next_id(),
-    }))
+    await bucket.ws.send(
+      json.dumps(
+        {
+          "method": "UNSUBSCRIBE",
+          "params": [f"{s.lower()}@trade" for s in symbols],
+          "id": bucket.next_id(),
+        }
+      )
+    )
 
   async def _receive_loop(self, bucket: Bucket):
     backoff = 1
@@ -179,7 +187,7 @@ class WebSocketService:
       log.info("Same-day candles fetched", symbol=symbol, count=count)
 
       if dag_run_id := self.pending_callbacks.pop(symbol, None):
-        await self.airflow_client.mark_task_success(dag_run_id)
+        await self.airflow_client.mark_realtime_ready(dag_run_id)
 
     except Exception as e:
       log.error("Failed to fetch same-day candles", symbol=symbol, error=str(e))

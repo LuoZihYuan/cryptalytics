@@ -19,6 +19,8 @@ class Settings(BaseSettings):
 
   # Airflow
   airflow_base_url: str = "http://airflow-webserver:8080"
+  airflow_username: str = ""
+  airflow_password: str = ""
   airflow_dag_id: str = "symbol_onboarding"
   airflow_task_id: str = "realtime_ready"
 

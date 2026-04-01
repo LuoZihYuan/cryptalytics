@@ -18,18 +18,22 @@ default_args = {
 }
 
 
-class ExternalCallbackSensor(BaseSensorOperator):
+class RealtimeReadySensor(BaseSensorOperator):
   """
-  Sensor that waits for external service to mark it as success via Airflow REST API.
+  Sensor that polls for an Airflow Variable set by the ingestion service.
 
-  The sensor keeps returning False (waiting). An external service calls:
-  PATCH /api/v1/dags/{dag_id}/dagRuns/{run_id}/taskInstances/{task_id}
-  with {"new_state": "success"} to complete the task.
-
+  The ingestion service creates a variable named `realtime_ready_{dag_run_id}`
+  once the real-time stream is confirmed and same-day candles are saved.
   Uses mode="reschedule" to release worker slot between pokes.
   """
 
   def poke(self, context):
+    dag_run_id = context["run_id"]
+    key = f"realtime_ready_{dag_run_id}"
+    value = Variable.get(key, default_var=None)
+    if value is not None:
+      Variable.delete(key)
+      return True
     return False
 
 
@@ -122,8 +126,8 @@ with DAG(
     dag_run_id="{{ run_id }}",
   )
 
-  # Step 2.1b: Wait for ingestion service to call back via REST API
-  realtime_ready = ExternalCallbackSensor(
+  # Step 2.1b: Wait for ingestion service to signal readiness via Variable
+  realtime_ready = RealtimeReadySensor(
     task_id="realtime_ready",
     mode="reschedule",
     poke_interval=60,
@@ -177,7 +181,7 @@ with DAG(
     get_logs=True,
   )
 
-  # Step 4: Mark symbol as available
+  # Step 3: Mark symbol as available
   mark_available = mark_symbol_available(
     symbol="{{ params.symbol }}",
     mongo_uri="{{ var.value.mongo_uri }}",

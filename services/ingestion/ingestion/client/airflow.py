@@ -5,29 +5,44 @@ from ingestion.settings import settings
 
 log = structlog.get_logger()
 
-TASK_INSTANCE_URL = "/api/v1/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}"
-
 
 class AirflowClient:
   def __init__(self):
     self.client = httpx.AsyncClient(base_url=settings.airflow_base_url)
+    self._token: str | None = None
 
   async def close(self):
     await self.client.aclose()
     log.info("Airflow client closed")
 
-  async def mark_task_success(self, dag_run_id: str):
-    url = TASK_INSTANCE_URL.format(
-      dag_id=settings.airflow_dag_id,
-      dag_run_id=dag_run_id,
-      task_id=settings.airflow_task_id,
-    )
+  async def _ensure_token(self):
+    if self._token is not None:
+      return
 
-    response = await self.client.patch(
-      url,
-      json={"state": "success"},
-      headers={"Content-Type": "application/json"},
+    response = await self.client.post(
+      "/auth/token",
+      json={
+        "username": settings.airflow_username,
+        "password": settings.airflow_password,
+      },
+    )
+    response.raise_for_status()
+    self._token = response.json()["access_token"]
+    log.info("Airflow JWT token acquired")
+
+  async def mark_realtime_ready(self, dag_run_id: str):
+    await self._ensure_token()
+
+    key = f"realtime_ready_{dag_run_id}"
+
+    response = await self.client.post(
+      "/api/v2/variables",
+      json={"key": key, "value": "true"},
+      headers={
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {self._token}",
+      },
     )
     response.raise_for_status()
 
-    log.info("Airflow task marked success", dag_run_id=dag_run_id)
+    log.info("Airflow variable set", key=key, dag_run_id=dag_run_id)
