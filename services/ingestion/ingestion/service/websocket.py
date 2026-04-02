@@ -4,6 +4,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 
+import httpx
 import structlog
 import websockets
 
@@ -185,12 +186,43 @@ class WebSocketService:
         until_timestamp=until_minute,
       )
       log.info("Same-day candles fetched", symbol=symbol, count=count)
+    except Exception:
+      log.error("Failed to fetch same-day candles", symbol=symbol, exc_info=True)
+      return
 
-      if dag_run_id := self.pending_callbacks.pop(symbol, None):
-        await self.airflow_client.mark_realtime_ready(dag_run_id)
-
-    except Exception as e:
-      log.error("Failed to fetch same-day candles", symbol=symbol, error=str(e))
+    dag_run_id = self.pending_callbacks.pop(symbol, None)
+    if dag_run_id:
+      max_attempts = 3
+      for attempt in range(1, max_attempts + 1):
+        try:
+          await self.airflow_client.mark_realtime_ready(dag_run_id)
+          return
+        except httpx.TransportError as e:
+          if attempt < max_attempts:
+            log.warning(
+              "Failed to signal Airflow, retrying",
+              symbol=symbol,
+              dag_run_id=dag_run_id,
+              attempt=attempt,
+              error=f"{type(e).__name__}: {e}",
+            )
+            await asyncio.sleep(2**attempt)
+          else:
+            log.error(
+              "Failed to signal Airflow after retries",
+              symbol=symbol,
+              dag_run_id=dag_run_id,
+              attempts=max_attempts,
+              exc_info=True,
+            )
+        except Exception:
+          log.error(
+            "Unexpected error signaling Airflow",
+            symbol=symbol,
+            dag_run_id=dag_run_id,
+            exc_info=True,
+          )
+          break
 
   async def close(self):
     for bucket in list(self._buckets):
