@@ -34,15 +34,24 @@ class AirflowClient:
     await self._ensure_token()
 
     key = f"realtime_ready_{dag_run_id}"
+    headers = {
+      "Content-Type": "application/json",
+      "Authorization": f"Bearer {self._token}",
+    }
 
     response = await self.client.post(
       "/api/v2/variables",
       json={"key": key, "value": "true"},
-      headers={
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {self._token}",
-      },
+      headers=headers,
     )
+
+    if response.status_code == 409:
+      response = await self.client.patch(
+        f"/api/v2/variables/{key}",
+        json={"value": "true"},
+        headers=headers,
+      )
+
     response.raise_for_status()
 
     log.info("Airflow variable set", key=key, dag_run_id=dag_run_id)
