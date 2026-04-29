@@ -5,14 +5,21 @@ images:
     pullPolicy: Never
 
 env:
-  - name: "AIRFLOW_VAR_MONGO_URI"
-    value: "mongodb://mongodb:27017/cryptalytics"
   - name: "AIRFLOW_VAR_IMAGE_PULL_POLICY"
     value: "Never"
   - name: "AIRFLOW_VAR_DELTA_CANDLES_PATH"
     value: "/data/delta/candles"
   - name: "AIRFLOW_CONN_INGESTION_GRPC"
     value: "grpc://ingestion:50051?extra__grpc__auth_type=NO_AUTH"
+
+extraEnv: |
+  - name: MONGODB_ROOT_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: mongodb-secrets
+        key: mongodb-root-password
+  - name: AIRFLOW_VAR_MONGO_URI
+    value: "mongodb://root:$(MONGODB_ROOT_PASSWORD)@mongodb:27017/cryptalytics?authSource=admin"
 
 executor: KubernetesExecutor
 

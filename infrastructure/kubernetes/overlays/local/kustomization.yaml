@@ -5,10 +5,10 @@ resources:
   - ../../base
   - delta-storage.yaml
   - kafka.yaml
+  - secrets.yaml
 patches:
   - path: ingestion-patch.yaml
   - path: tick-processor-patch.yaml
-  - path: secrets.yaml
   # Fix kustomize 5.8.x namespace bug for Helm-generated resources
   - target:
       kind: (ConfigMap|ServiceAccount|Deployment|StatefulSet|Job|Service|PodDisruptionBudget|NetworkPolicy|Secret|Role|RoleBinding)
