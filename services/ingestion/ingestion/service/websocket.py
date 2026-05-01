@@ -195,7 +195,7 @@ class WebSocketService:
       max_attempts = 3
       for attempt in range(1, max_attempts + 1):
         try:
-          await self.airflow_client.mark_realtime_ready(dag_run_id)
+          await self.airflow_client.mark_realtime_ready(dag_run_id, symbol)
           return
         except httpx.TransportError as e:
           if attempt < max_attempts:

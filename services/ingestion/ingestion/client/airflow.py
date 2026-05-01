@@ -30,10 +30,10 @@ class AirflowClient:
     self._token = response.json()["access_token"]
     log.info("Airflow JWT token acquired")
 
-  async def mark_realtime_ready(self, dag_run_id: str):
+  async def mark_realtime_ready(self, dag_run_id: str, symbol: str):
     await self._ensure_token()
 
-    key = f"realtime_ready_{dag_run_id}"
+    key = f"realtime_ready_{dag_run_id}_{symbol}"
     headers = {
       "Content-Type": "application/json",
       "Authorization": f"Bearer {self._token}",
@@ -54,4 +54,4 @@ class AirflowClient:
 
     response.raise_for_status()
 
-    log.info("Airflow variable set", key=key, dag_run_id=dag_run_id)
+    log.info("Airflow variable set", key=key, dag_run_id=dag_run_id, symbol=symbol)
