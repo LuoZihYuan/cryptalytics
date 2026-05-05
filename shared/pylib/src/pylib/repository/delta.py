@@ -1,8 +1,10 @@
 import asyncio
+import time
 
+import pyarrow as pa
 import structlog
 from deltalake import DeltaTable, write_deltalake
-import pyarrow as pa
+from deltalake._internal import CommitFailedError
 
 log = structlog.get_logger()
 
@@ -24,6 +26,11 @@ TABLE_CONFIG = {
   "delta.isolationLevel": "SnapshotIsolation",
 }
 
+PARTITION_BY = ["symbol"]
+
+MAX_RETRIES = 3
+BASE_BACKOFF_S = 0.1
+
 
 class DeltaRepository:
   def __init__(self, table_path: str, storage_options: dict | None = None):
@@ -39,14 +46,28 @@ class DeltaRepository:
     log.info("Candles saved to Delta Lake", count=table.num_rows)
 
   def _append(self, table: pa.Table):
-    is_new = not DeltaTable.is_deltatable(
-      self.table_path, storage_options=self.storage_options
-    )
+    for attempt in range(1, MAX_RETRIES + 1):
+      try:
+        is_new = not DeltaTable.is_deltatable(
+          self.table_path, storage_options=self.storage_options
+        )
 
-    write_deltalake(
-      self.table_path,
-      table,
-      mode="append",
-      configuration=TABLE_CONFIG if is_new else None,
-      storage_options=self.storage_options,
-    )
+        write_deltalake(
+          self.table_path,
+          table,
+          mode="append",
+          partition_by=PARTITION_BY if is_new else None,
+          configuration=TABLE_CONFIG if is_new else None,
+          storage_options=self.storage_options,
+        )
+        return
+      except CommitFailedError:
+        if attempt == MAX_RETRIES:
+          raise
+        backoff = BASE_BACKOFF_S * (2 ** (attempt - 1))
+        log.warning(
+          "Delta append conflict, retrying",
+          attempt=attempt,
+          backoff=backoff,
+        )
+        time.sleep(backoff)
