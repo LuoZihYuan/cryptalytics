@@ -12,6 +12,9 @@ class Settings(BaseSettings):
   # Kafka
   kafka_bootstrap_servers: str = "localhost:9092"
   kafka_topic_ticks: str = "raw_ticks"
+  kafka_topic_ticks_partitions: int = 1
+  kafka_topic_ticks_replication_factor: int = 1
+  kafka_topic_ticks_retention_ms: int = 86400000  # 1 day
 
   # Delta Lake
   delta_candles_path: str = "s3://cryptalytics/candles"
