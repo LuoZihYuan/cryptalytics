@@ -1,3 +1,4 @@
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -11,6 +12,8 @@ from pymongo import MongoClient, UpdateOne
 
 import ingestion_pb2
 import ingestion_pb2_grpc
+
+log = logging.getLogger(__name__)
 
 default_args = {
   "owner": "cryptalytics",
@@ -104,10 +107,16 @@ with DAG(
 
   @task
   def wait_for_realtime(symbols: list[str], dag_run_id: str):
-    timeout_seconds = 600
+    # Illiquid pairs on binance.us can go many minutes between trades; the
+    # realtime-ready signal only fires once the streaming pipeline has
+    # produced a candle, which requires a real trade. Set the budget high
+    # enough to cover quiet periods rather than failing prematurely.
+    timeout_seconds = 3600
     poll_interval = 30
-    deadline = time.time() + timeout_seconds
+    started_at = time.time()
+    deadline = started_at + timeout_seconds
     pending = set(symbols)
+    first_seen_at: dict[str, float] = {}
 
     while pending and time.time() < deadline:
       for symbol in list(pending):
@@ -115,14 +124,34 @@ with DAG(
         value = Variable.get(key, default_var=None)
         if value is not None:
           Variable.delete(key)
+          elapsed = time.time() - started_at
+          first_seen_at[symbol] = elapsed
+          log.info(
+            "Realtime ready",
+            extra={"symbol": symbol, "elapsed_seconds": round(elapsed, 1)},
+          )
           pending.discard(symbol)
+
       if pending:
+        elapsed = time.time() - started_at
+        remaining = max(0, deadline - time.time())
+        log.info(
+          "Still waiting for realtime",
+          extra={
+            "pending": sorted(pending),
+            "elapsed_seconds": round(elapsed, 1),
+            "remaining_seconds": round(remaining, 1),
+          },
+        )
         time.sleep(poll_interval)
 
     if pending:
       raise TimeoutError(
-        f"Realtime not ready after {timeout_seconds}s for: {sorted(pending)}"
+        f"Realtime not ready after {timeout_seconds}s for: {sorted(pending)} "
+        f"(ready timings: {first_seen_at})"
       )
+
+    log.info("All symbols realtime-ready", extra={"timings": first_seen_at})
 
   @task
   def mark_symbols_available(symbols: list[str], mongo_uri: str):
