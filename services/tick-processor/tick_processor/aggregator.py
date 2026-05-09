@@ -1,9 +1,10 @@
+import time
 from decimal import Decimal
 
 import structlog
 from pyflink.common.typeinfo import Types
 from pyflink.datastream import KeyedProcessFunction, RuntimeContext
-from pyflink.datastream.state import ValueStateDescriptor
+from pyflink.datastream.state import MapStateDescriptor, ValueStateDescriptor
 
 from tick_processor.settings import settings
 
@@ -12,40 +13,58 @@ log = structlog.get_logger()
 
 class CandleAggregator(KeyedProcessFunction):
   def open(self, runtime_context: RuntimeContext):
-    self._acc = runtime_context.get_state(
-      ValueStateDescriptor("acc", Types.PICKLED_BYTE_ARRAY())
+    # Multiple windows for one key may be open simultaneously (a new tick can
+    # arrive for window N+1 before the watermark fires window N's timer).
+    # Keying acc state by window_start lets each window live independently
+    # until its own timer fires.
+    self._accs = runtime_context.get_map_state(
+      MapStateDescriptor("accs", Types.LONG(), Types.PICKLED_BYTE_ARRAY())
     )
+    # Per-window dedup: same trade_id arriving twice within the same window
+    # must be de-duplicated, but trade_ids in different windows are
+    # independent. Map<window_start, set[trade_id]>.
+    self._seen_trade_ids = runtime_context.get_map_state(
+      MapStateDescriptor("seen_trade_ids", Types.LONG(), Types.PICKLED_BYTE_ARRAY())
+    )
+    # Last close is shared across windows for the gap-fill path.
     self._last_close = runtime_context.get_state(
       ValueStateDescriptor("last_close", Types.PICKLED_BYTE_ARRAY())
     )
-    self._timer_ts = runtime_context.get_state(
-      ValueStateDescriptor("timer_ts", Types.LONG())
-    )
-    self._seen_trade_ids = runtime_context.get_state(
-      ValueStateDescriptor("seen_trade_ids", Types.PICKLED_BYTE_ARRAY())
+    # Smallest window_start still eligible for new ticks. Once a window has
+    # been sealed (its candle emitted), late ticks for that window must be
+    # rejected — otherwise they would rebuild the accumulator and the next
+    # timer would emit a duplicate candle.
+    self._min_open_window = runtime_context.get_state(
+      ValueStateDescriptor("min_open_window", Types.LONG())
     )
 
   def process_element(self, tick, ctx: KeyedProcessFunction.Context):
-    seen = self._seen_trade_ids.value() or set()
-    if tick.trade_id in seen:
-      return
-    seen.add(tick.trade_id)
-    self._seen_trade_ids.update(seen)
-
     window_start = (tick.timestamp // settings.window_size_ms) * settings.window_size_ms
     window_end = window_start + settings.window_size_ms
 
-    acc = self._acc.value()
+    min_open = self._min_open_window.value() or 0
+    if window_start < min_open:
+      log.warning(
+        "Dropping late tick for sealed window",
+        symbol=tick.symbol,
+        tick_ts=tick.timestamp,
+        window_start=window_start,
+        min_open_window=min_open,
+        trade_id=tick.trade_id,
+      )
+      return
 
-    if acc is not None and acc["window_start"] != window_start:
-      yield from self._build_candle(acc)
-      self._last_close.update(acc["close_price"])
-      self._acc.clear()
-      self._seen_trade_ids.update({tick.trade_id})
-      old_timer = self._timer_ts.value()
-      if old_timer is not None:
-        ctx.timer_service().delete_processing_time_timer(old_timer)
-      acc = None
+    seen = (
+      self._seen_trade_ids.get(window_start)
+      if self._seen_trade_ids.contains(window_start)
+      else set()
+    )
+    if tick.trade_id in seen:
+      return
+    seen.add(tick.trade_id)
+    self._seen_trade_ids.put(window_start, seen)
+
+    acc = self._accs.get(window_start) if self._accs.contains(window_start) else None
 
     if acc is None:
       acc = {
@@ -61,9 +80,7 @@ class CandleAggregator(KeyedProcessFunction):
         "volume": tick.quantity,
         "trades": 1,
       }
-      timer = window_end + settings.watermark_delay_ms
-      ctx.timer_service().register_processing_time_timer(timer)
-      self._timer_ts.update(timer)
+      ctx.timer_service().register_event_time_timer(window_end)
     else:
       if tick.timestamp < acc["open_ts"]:
         acc["open_price"] = tick.price
@@ -76,22 +93,52 @@ class CandleAggregator(KeyedProcessFunction):
       acc["volume"] += tick.quantity
       acc["trades"] += 1
 
-    self._acc.update(acc)
+    self._accs.put(window_start, acc)
 
   def on_timer(self, timestamp: int, ctx: KeyedProcessFunction.OnTimerContext):
-    acc = self._acc.value()
+    # For event-time timers, `timestamp` is exactly the registered fire time
+    # — i.e., the window_end we passed to register_event_time_timer.
+    window_end = timestamp
+    window_start = window_end - settings.window_size_ms
+
+    fire_wall_ms = int(time.time() * 1000)
+    log.info(
+      "Timer fired",
+      symbol=ctx.get_current_key(),
+      window_end=window_end,
+      fire_wall_ms=fire_wall_ms,
+      delay_ms=fire_wall_ms - window_end,
+    )
+
+    # If this window has already been sealed by a prior timer fire (e.g. due
+    # to a duplicate timer registration that the late-tick guard now blocks
+    # but pre-existing state may still trigger), do nothing further.
+    min_open = self._min_open_window.value() or 0
+    if window_start < min_open:
+      log.warning(
+        "Timer fired for already-sealed window — skipping",
+        symbol=ctx.get_current_key(),
+        window_start=window_start,
+        min_open_window=min_open,
+      )
+      return
+
+    acc = self._accs.get(window_start) if self._accs.contains(window_start) else None
 
     if acc is not None:
       yield from self._build_candle(acc)
       self._last_close.update(acc["close_price"])
-      self._acc.clear()
-      self._seen_trade_ids.clear()
+      self._accs.remove(window_start)
+      if self._seen_trade_ids.contains(window_start):
+        self._seen_trade_ids.remove(window_start)
     else:
+      # No accumulator for this window — emit a flat gap-fill candle from
+      # the last known close, if we have one.
       last_close = self._last_close.value()
       if last_close is not None:
-        window_end = timestamp
-        window_start = window_end - settings.window_size_ms
-        log.debug("Gap-filling candle", symbol=ctx.get_current_key(), start=window_start)
+        log.debug(
+          "Gap-filling candle", symbol=ctx.get_current_key(), start=window_start
+        )
         yield {
           "symbol": ctx.get_current_key(),
           "start": window_start,
@@ -104,9 +151,14 @@ class CandleAggregator(KeyedProcessFunction):
           "trades": 0,
         }
 
-    next_timer = timestamp + settings.window_size_ms
-    ctx.timer_service().register_processing_time_timer(next_timer)
-    self._timer_ts.update(next_timer)
+    # Mark every window up to and including this one as sealed. New ticks
+    # for these windows will be rejected by the late-tick guard above.
+    self._min_open_window.update(window_end)
+
+    # Schedule the next window's timer so gap-fills continue even when no
+    # ticks arrive to register fresh timers.
+    next_window_end = window_end + settings.window_size_ms
+    ctx.timer_service().register_event_time_timer(next_window_end)
 
   def _build_candle(self, acc: dict):
     yield {
