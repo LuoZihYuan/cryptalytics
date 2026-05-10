@@ -1,5 +1,6 @@
 import asyncio
 import time
+from datetime import datetime, timezone
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -40,6 +41,11 @@ PARTITION_BY = ["symbol", "month"]
 MAX_RETRIES = 3
 BASE_BACKOFF_S = 0.1
 
+# 1-minute candle. Used to derive the log's exclusive end from min(start)
+# and max(start), independent of the `end` column (which differs by writer:
+# streaming uses exclusive end, Binance REST/backfill use inclusive end).
+WINDOW_SIZE_MS = 60000
+
 
 def _add_month_column(table: pa.Table) -> pa.Table:
   """Derive `month` (YYYYMM as int32) from the `start` column (Unix ms)."""
@@ -51,6 +57,19 @@ def _add_month_column(table: pa.Table) -> pa.Table:
     pc.cast(month, pa.int32()),
   )
   return table.append_column("month", yyyymm)
+
+
+def _summarize_symbols(table: pa.Table) -> dict:
+  """Return either {'symbol': X} for one symbol or {'symbols': [...]} for many."""
+  unique = pc.unique(table["symbol"]).to_pylist()
+  if len(unique) == 1:
+    return {"symbol": unique[0]}
+  return {"symbols": unique}
+
+
+def _iso(ms: int) -> str:
+  """Render a Unix ms timestamp as a UTC ISO 8601 string."""
+  return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
 
 
 class DeltaRepository:
@@ -74,8 +93,25 @@ class DeltaRepository:
     # Final shape matches the internal storage schema.
     table = table.select([f.name for f in _PARTITIONED_CANDLE_SCHEMA])
 
+    symbol_fields = _summarize_symbols(table)
+    start_ms = pc.min(table["start"]).as_py()
+    # Derive an exclusive end from the latest window's start. Avoids reading
+    # the `end` column directly because writers disagree on its convention
+    # (streaming: exclusive; REST/backfill from Binance: inclusive).
+    end_ms = pc.max(table["start"]).as_py() + WINDOW_SIZE_MS
+
+    started_at = time.monotonic()
     await asyncio.to_thread(self._append, table)
-    log.info("Candles saved to Delta Lake", count=table.num_rows)
+    write_ms = int((time.monotonic() - started_at) * 1000)
+
+    log.info(
+      "delta: wrote candles",
+      **symbol_fields,
+      count=table.num_rows,
+      start=_iso(start_ms),
+      end=_iso(end_ms),
+      write_ms=write_ms,
+    )
 
   def _append(self, table: pa.Table):
     for attempt in range(1, MAX_RETRIES + 1):
@@ -98,7 +134,7 @@ class DeltaRepository:
           raise
         backoff = BASE_BACKOFF_S * (2 ** (attempt - 1))
         log.warning(
-          "Delta append conflict, retrying",
+          "delta: append retry",
           attempt=attempt,
           backoff=backoff,
         )

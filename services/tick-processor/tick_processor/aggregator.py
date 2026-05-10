@@ -1,4 +1,3 @@
-import time
 from decimal import Decimal
 
 import structlog
@@ -45,12 +44,12 @@ class CandleAggregator(KeyedProcessFunction):
     min_open = self._min_open_window.value() or 0
     if window_start < min_open:
       log.warning(
-        "Dropping late tick for sealed window",
+        "aggregator: late tick dropped",
         symbol=tick.symbol,
+        trade_id=tick.trade_id,
         tick_ts=tick.timestamp,
         window_start=window_start,
         min_open_window=min_open,
-        trade_id=tick.trade_id,
       )
       return
 
@@ -101,14 +100,20 @@ class CandleAggregator(KeyedProcessFunction):
     window_end = timestamp
     window_start = window_end - settings.window_size_ms
 
-    fire_wall_ms = int(time.time() * 1000)
-    log.info(
-      "Timer fired",
-      symbol=ctx.get_current_key(),
-      window_end=window_end,
-      fire_wall_ms=fire_wall_ms,
-      delay_ms=fire_wall_ms - window_end,
-    )
+    # Diagnostic for watermark/timer-fire latency. Disabled in steady state
+    # because it fires once per (symbol, window) and the same timing is
+    # implicit in the subsequent `delta: wrote candles` log timestamp.
+    # Uncomment (and re-add `import time` at the top) to investigate timer
+    # behavior.
+    #
+    # fire_wall_ms = int(time.time() * 1000)
+    # log.info(
+    #   "aggregator: timer fired",
+    #   symbol=ctx.get_current_key(),
+    #   window_end=window_end,
+    #   fire_wall_ms=fire_wall_ms,
+    #   delay_ms=fire_wall_ms - window_end,
+    # )
 
     # If this window has already been sealed by a prior timer fire (e.g. due
     # to a duplicate timer registration that the late-tick guard now blocks
@@ -116,7 +121,7 @@ class CandleAggregator(KeyedProcessFunction):
     min_open = self._min_open_window.value() or 0
     if window_start < min_open:
       log.warning(
-        "Timer fired for already-sealed window — skipping",
+        "aggregator: sealed window timer skipped",
         symbol=ctx.get_current_key(),
         window_start=window_start,
         min_open_window=min_open,
@@ -137,7 +142,9 @@ class CandleAggregator(KeyedProcessFunction):
       last_close = self._last_close.value()
       if last_close is not None:
         log.debug(
-          "Gap-filling candle", symbol=ctx.get_current_key(), start=window_start
+          "aggregator: gap-filled",
+          symbol=ctx.get_current_key(),
+          start=window_start,
         )
         yield {
           "symbol": ctx.get_current_key(),

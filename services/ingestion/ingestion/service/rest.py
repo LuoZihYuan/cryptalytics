@@ -53,7 +53,7 @@ class RestService:
 
   async def close(self):
     await self.client.aclose()
-    log.info("REST service closed")
+    log.info("rest: closed")
 
   async def fetch_and_save_same_day_candles(
     self, symbol: str, until_timestamp: int
@@ -64,7 +64,7 @@ class RestService:
     start_timestamp = int(midnight.timestamp() * 1000)
 
     log.info(
-      "Fetching same-day candles",
+      "rest: fetching same-day candles",
       symbol=symbol,
       start=midnight.isoformat(),
       until=now.isoformat(),
@@ -96,5 +96,4 @@ class RestService:
     table = klines_to_table(symbol, klines)
     await self.delta_repository.save_table(table)
 
-    log.info("Same-day candles saved", symbol=symbol, count=table.num_rows)
     return table.num_rows

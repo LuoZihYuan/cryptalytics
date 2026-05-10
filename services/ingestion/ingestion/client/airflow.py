@@ -13,7 +13,7 @@ class AirflowClient:
 
   async def close(self):
     await self.client.aclose()
-    log.info("Airflow client closed")
+    log.info("airflow: client closed")
 
   async def _ensure_token(self):
     if self._token is not None:
@@ -28,7 +28,7 @@ class AirflowClient:
     )
     response.raise_for_status()
     self._token = response.json()["access_token"]
-    log.info("Airflow JWT token acquired")
+    log.info("airflow: jwt acquired")
 
   async def mark_realtime_ready(self, dag_run_id: str, symbol: str):
     await self._ensure_token()
@@ -54,4 +54,9 @@ class AirflowClient:
 
     response.raise_for_status()
 
-    log.info("Airflow variable set", key=key, dag_run_id=dag_run_id, symbol=symbol)
+    log.info(
+      "airflow: variable set",
+      symbol=symbol,
+      key=key,
+      dag_run_id=dag_run_id,
+    )

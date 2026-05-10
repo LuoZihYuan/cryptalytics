@@ -127,7 +127,7 @@ with DAG(
           elapsed = time.time() - started_at
           first_seen_at[symbol] = elapsed
           log.info(
-            "Realtime ready",
+            "dag: realtime ready",
             extra={"symbol": symbol, "elapsed_seconds": round(elapsed, 1)},
           )
           pending.discard(symbol)
@@ -136,7 +136,7 @@ with DAG(
         elapsed = time.time() - started_at
         remaining = max(0, deadline - time.time())
         log.info(
-          "Still waiting for realtime",
+          "dag: realtime waiting",
           extra={
             "pending": sorted(pending),
             "elapsed_seconds": round(elapsed, 1),
@@ -151,7 +151,10 @@ with DAG(
         f"(ready timings: {first_seen_at})"
       )
 
-    log.info("All symbols realtime-ready", extra={"timings": first_seen_at})
+    log.info(
+      "dag: realtime ready all",
+      extra={"timings": first_seen_at},
+    )
 
   @task
   def mark_symbols_available(symbols: list[str], mongo_uri: str):

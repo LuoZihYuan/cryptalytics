@@ -1,6 +1,5 @@
 import asyncio
 import json
-import time
 from dataclasses import dataclass
 
 import pyarrow as pa
@@ -22,6 +21,11 @@ from tick_processor.heartbeat import (
 from tick_processor.settings import settings
 
 structlog.configure(
+  processors=[
+    structlog.processors.add_log_level,
+    structlog.processors.TimeStamper(fmt="iso"),
+    structlog.dev.ConsoleRenderer(sort_keys=False),
+  ],
   wrapper_class=structlog.make_filtering_bound_logger(settings.log_level),
 )
 log = structlog.get_logger()
@@ -59,8 +63,6 @@ class DeltaSink(ProcessFunction):
     self._repo = None
 
   def process_element(self, candle: dict, ctx):
-    received_ms = int(time.time() * 1000)
-
     if self._repo is None:
       self._repo = DeltaRepository(self._table_path, self._storage_options)
 
@@ -79,35 +81,16 @@ class DeltaSink(ProcessFunction):
       schema=CANDLE_SCHEMA,
     )
 
-    write_started_ms = int(time.time() * 1000)
     asyncio.run(self._repo.save_table(table))
-    write_completed_ms = int(time.time() * 1000)
-
-    log.info(
-      "Candle written",
-      symbol=candle["symbol"],
-      start=candle["start"],
-      sink_overhead_ms=write_started_ms - received_ms,
-      write_ms=write_completed_ms - write_started_ms,
-      total_sink_ms=write_completed_ms - received_ms,
-    )
 
 
 def create_env() -> StreamExecutionEnvironment:
   config = Configuration()
   config.set_string("state.checkpoints.dir", settings.checkpoint_path)
-  # Tighten watermark emission cadence (default 200 ms). With a 500 ms
-  # out-of-orderness tolerance and 100 ms heartbeat cadence, a 50 ms
-  # emit interval lets the watermark advance close to the rate that
-  # records actually arrive, rather than in 200 ms steps.
   config.set_string(
     "pipeline.auto-watermark-interval",
     f"{settings.auto_watermark_interval_ms} ms",
   )
-  # PyFlink micro-batches records across the JVM ↔ Python boundary.
-  # Lowering bundle-time and bundle-size shortens the buffering delay
-  # between record arrival in the JVM and processing in Python, which
-  # lets watermarks propagate to the keyed operator faster.
   config.set_string(
     "python.fn-execution.bundle-time", str(settings.python_bundle_time_ms)
   )
@@ -124,11 +107,6 @@ def create_kafka_source() -> KafkaSource:
   Watermarks are applied later, on the parsed stream — heartbeats and ticks
   contribute equally to watermark advancement, but only ticks reach the
   aggregator.
-
-  Lower `fetch.max.wait.ms` than the default (500 ms) so the consumer
-  doesn't sit waiting up to 500 ms when small numbers of records are
-  available — heartbeats are tiny and arrive every 100 ms, so there's
-  always something to fetch immediately.
   """
   return (
     KafkaSource.builder()
@@ -153,29 +131,19 @@ def main():
       "AWS_ALLOW_HTTP": "true",
     }
 
-  # Provision the heartbeat topic up-front so the Kafka source doesn't
-  # autocreate it with default retention.
   ensure_heartbeat_topic_blocking()
-
-  # Start the heartbeat publisher on a background thread before env.execute()
-  # blocks the main thread on the JVM.
   _, heartbeat_stop = start_heartbeat_thread()
 
   env = create_env()
   kafka_source = create_kafka_source()
 
   log.info(
-    "Starting tick processor",
-    kafka=settings.kafka_bootstrap_servers,
-    ticks_topic=settings.kafka_topic_ticks,
-    heartbeats_topic=settings.kafka_topic_heartbeats,
-    delta_path=settings.delta_candles_path,
+    "flink: job starting",
+    parallelism=1,
     out_of_orderness_ms=settings.watermark_out_of_orderness_ms,
-    heartbeat_interval_ms=settings.heartbeat_interval_ms,
-    auto_watermark_interval_ms=settings.auto_watermark_interval_ms,
-    kafka_fetch_max_wait_ms=settings.kafka_fetch_max_wait_ms,
-    python_bundle_time_ms=settings.python_bundle_time_ms,
-    python_bundle_size=settings.python_bundle_size,
+    watermark_interval_ms=settings.auto_watermark_interval_ms,
+    bundle_time_ms=settings.python_bundle_time_ms,
+    bundle_size=settings.python_bundle_size,
   )
 
   watermark_strategy = WatermarkStrategy.for_bounded_out_of_orderness(

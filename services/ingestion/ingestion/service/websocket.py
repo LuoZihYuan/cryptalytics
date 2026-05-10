@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 import httpx
@@ -19,8 +21,14 @@ log = structlog.get_logger()
 MAX_STREAMS_PER_CONNECTION = 1024
 
 
+def _short(bucket_id: str) -> str:
+  """Display form of a UUID — first 8 hex chars."""
+  return bucket_id[:8]
+
+
 @dataclass(eq=False)
 class Bucket:
+  id: str = field(default_factory=lambda: str(uuid.uuid4()))
   symbols: set[str] = field(default_factory=set)
   ws: websockets.asyncio.client.ClientConnection | None = None
   task: asyncio.Task | None = None
@@ -47,12 +55,26 @@ class WebSocketService:
     self.pending_callbacks: dict[str, str] = {}  # symbol -> dag_run_id
     self._first_tick_minute: dict[str, int] = {}  # symbol -> minute of first tick
 
+  def _service_distribution(self) -> dict[str, int]:
+    """Map of {short_connection_id: symbol_count} across all active buckets."""
+    return {_short(b.id): len(b.symbols) for b in self._buckets}
+
   async def subscribe(self, symbols: list[str], dag_run_id: str | None = None):
     new_symbols = [s for s in symbols if s not in self._symbol_to_bucket]
     already = [s for s in symbols if s in self._symbol_to_bucket]
 
     if already:
-      log.warning("Already subscribed", symbols=already)
+      # Group already-subscribed symbols by the connection they live on so
+      # the warning identifies where each one already exists.
+      by_connection: dict[str, list[str]] = defaultdict(list)
+      for s in already:
+        by_connection[self._symbol_to_bucket[s].id].append(s)
+      for connection_id, syms in by_connection.items():
+        log.warning(
+          "websocket: already subscribed",
+          connection=_short(connection_id),
+          symbols=syms,
+        )
 
     if not new_symbols:
       return
@@ -72,7 +94,7 @@ class WebSocketService:
         self._buckets.append(bucket)
         bucket.task = asyncio.create_task(
           self._receive_loop(bucket),
-          name=f"ws-bucket-{len(self._buckets)}",
+          name=f"ws-bucket-{_short(bucket.id)}",
         )
 
       bucket.symbols.add(symbol)
@@ -81,14 +103,26 @@ class WebSocketService:
 
     for bucket, syms in added.items():
       if bucket.ws is not None:
+        # Adding to an already-connected bucket. The connection's
+        # `websocket: connected` log fired previously, so emit a state-change
+        # log here so it's visible in the trail.
         await self._send_subscribe(bucket, syms)
-
-    log.info("Subscribed", symbols=new_symbols, dag_run_id=dag_run_id)
+        log.info(
+          "websocket: streams added",
+          connection=_short(bucket.id),
+          added=syms,
+          service=self._service_distribution(),
+        )
+      # If bucket.ws is None, the receive loop will send the SUBSCRIBE on
+      # connect and emit `websocket: connected` for the full set.
 
   async def unsubscribe(self, symbol: str):
     bucket = self._symbol_to_bucket.pop(symbol, None)
     if bucket is None:
-      log.warning("Not subscribed", symbol=symbol)
+      log.warning(
+        "websocket: unsubscribe miss",
+        symbol=symbol,
+      )
       return
 
     bucket.symbols.discard(symbol)
@@ -102,8 +136,6 @@ class WebSocketService:
     if not bucket.symbols and bucket.task:
       bucket.task.cancel()
       self._buckets.remove(bucket)
-
-    log.info("Unsubscribed", symbol=symbol)
 
   def list_subscriptions(self) -> list[str]:
     return list(self._symbol_to_bucket.keys())
@@ -139,7 +171,11 @@ class WebSocketService:
           backoff = 1
           if bucket.symbols:
             await self._send_subscribe(bucket, list(bucket.symbols))
-          log.info("Connected", streams=len(bucket.symbols))
+          log.info(
+            "websocket: connected",
+            connection=_short(bucket.id),
+            service=self._service_distribution(),
+          )
 
           async for raw in ws:
             msg = json.loads(raw)
@@ -150,7 +186,13 @@ class WebSocketService:
       except asyncio.CancelledError:
         break
       except Exception as e:
-        log.error("WebSocket error, reconnecting", error=str(e), backoff=backoff)
+        log.warning(
+          "websocket: reconnecting",
+          connection=_short(bucket.id),
+          error=str(e),
+          backoff=backoff,
+          service=self._service_distribution(),
+        )
         for symbol in bucket.symbols:
           self.same_day_fetched.discard(symbol)
           self._first_tick_minute.pop(symbol, None)
@@ -185,9 +227,17 @@ class WebSocketService:
         symbol=symbol,
         until_timestamp=until_minute,
       )
-      log.info("Same-day candles fetched", symbol=symbol, count=count)
+      log.info(
+        "rest: same-day fetched",
+        symbol=symbol,
+        count=count,
+      )
     except Exception:
-      log.error("Failed to fetch same-day candles", symbol=symbol, exc_info=True)
+      log.error(
+        "rest: same-day fetch failed",
+        symbol=symbol,
+        exc_info=True,
+      )
       return
 
     dag_run_id = self.pending_callbacks.pop(symbol, None)
@@ -200,7 +250,7 @@ class WebSocketService:
         except httpx.TransportError as e:
           if attempt < max_attempts:
             log.warning(
-              "Failed to signal Airflow, retrying",
+              "airflow: signal retry",
               symbol=symbol,
               dag_run_id=dag_run_id,
               attempt=attempt,
@@ -209,7 +259,7 @@ class WebSocketService:
             await asyncio.sleep(2**attempt)
           else:
             log.error(
-              "Failed to signal Airflow after retries",
+              "airflow: signal failed",
               symbol=symbol,
               dag_run_id=dag_run_id,
               attempts=max_attempts,
@@ -217,7 +267,7 @@ class WebSocketService:
             )
         except Exception:
           log.error(
-            "Unexpected error signaling Airflow",
+            "airflow: signal error",
             symbol=symbol,
             dag_run_id=dag_run_id,
             exc_info=True,
@@ -233,4 +283,4 @@ class WebSocketService:
     if tasks:
       await asyncio.gather(*tasks, return_exceptions=True)
 
-    log.info("WebSocket service closed")
+    log.info("websocket: closed")

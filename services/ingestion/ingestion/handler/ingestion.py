@@ -13,7 +13,11 @@ class IngestionHandler(ingestion_pb2_grpc.IngestionServiceServicer):
   async def Subscribe(self, request, context):
     symbols = [s.upper() for s in request.symbols]
     dag_run_id = request.dag_run_id if request.HasField("dag_run_id") else None
-    log.info("Subscribe request", symbols=symbols, dag_run_id=dag_run_id)
+    log.info(
+      "grpc: subscribe received",
+      symbols=symbols,
+      dag_run_id=dag_run_id,
+    )
 
     try:
       await self.websocket_service.subscribe(symbols, dag_run_id)
@@ -22,7 +26,11 @@ class IngestionHandler(ingestion_pb2_grpc.IngestionServiceServicer):
         message=f"Subscribed to {', '.join(symbols)}",
       )
     except Exception as e:
-      log.error("Subscribe failed", symbols=symbols, error=str(e))
+      log.error(
+        "grpc: subscribe failed",
+        symbols=symbols,
+        error=str(e),
+      )
       return ingestion_pb2.SubscribeResponse(
         success=False,
         message=str(e),
@@ -30,7 +38,10 @@ class IngestionHandler(ingestion_pb2_grpc.IngestionServiceServicer):
 
   async def Unsubscribe(self, request, context):
     symbols = [s.upper() for s in request.symbols]
-    log.info("Unsubscribe request", symbols=symbols)
+    log.info(
+      "grpc: unsubscribe received",
+      symbols=symbols,
+    )
 
     try:
       for symbol in symbols:
@@ -40,7 +51,11 @@ class IngestionHandler(ingestion_pb2_grpc.IngestionServiceServicer):
         message=f"Unsubscribed from {', '.join(symbols)}",
       )
     except Exception as e:
-      log.error("Unsubscribe failed", symbols=symbols, error=str(e))
+      log.error(
+        "grpc: unsubscribe failed",
+        symbols=symbols,
+        error=str(e),
+      )
       return ingestion_pb2.UnsubscribeResponse(
         success=False,
         message=str(e),

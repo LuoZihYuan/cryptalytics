@@ -42,17 +42,24 @@ async def download_file(
   for attempt in range(max_retries):
     async with semaphore:
       try:
-        log.debug("Downloading", url=url, attempt=attempt + 1)
+        log.debug(
+          "backfill: downloading",
+          url=url,
+          attempt=attempt + 1,
+        )
         response = await client.get(url, timeout=30)
         response.raise_for_status()
         return response.content
       except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-          log.warning("File not found", url=url)
+          log.warning(
+            "backfill: file not found",
+            url=url,
+          )
           return None
         if e.response.status_code >= 500 and attempt < max_retries - 1:
           log.warning(
-            "Server error, retrying",
+            "backfill: download retry",
             url=url,
             status=e.response.status_code,
           )
@@ -60,12 +67,15 @@ async def download_file(
           raise
       except httpx.TransportError as e:
         if attempt < max_retries - 1:
-          log.warning("Network error, retrying", url=url, error=str(e))
+          log.warning(
+            "backfill: download retry",
+            url=url,
+            error=str(e),
+          )
         else:
           raise
 
     delay = retry_base_delay ** (attempt + 1)
-    log.debug("Waiting before retry", url=url, delay=delay)
     await asyncio.sleep(delay)
 
   return None
@@ -108,5 +118,9 @@ async def download_parse_save(
     await delta_repository.save_table(table)
     return table.num_rows
   except Exception:
-    log.error("Failed to process", url=url, exc_info=True)
+    log.error(
+      "backfill: failed",
+      url=url,
+      exc_info=True,
+    )
     return 0

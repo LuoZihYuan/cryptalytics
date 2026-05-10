@@ -32,12 +32,15 @@ async def _ensure_heartbeat_topic():
       ]
     )
     log.info(
-      "Heartbeat topic created",
+      "kafka: topic created",
       topic=settings.kafka_topic_heartbeats,
       retention_ms=settings.kafka_topic_heartbeats_retention_ms,
     )
   except TopicAlreadyExistsError:
-    log.info("Heartbeat topic already exists", topic=settings.kafka_topic_heartbeats)
+    log.info(
+      "kafka: topic exists",
+      topic=settings.kafka_topic_heartbeats,
+    )
   finally:
     await admin.close()
 
@@ -56,7 +59,7 @@ async def _publish_loop(stop_event: asyncio.Event):
   producer = AIOKafkaProducer(bootstrap_servers=settings.kafka_bootstrap_servers)
   await producer.start()
   log.info(
-    "Heartbeat publisher started",
+    "heartbeat: publisher started",
     topic=settings.kafka_topic_heartbeats,
     interval_ms=settings.heartbeat_interval_ms,
   )
@@ -83,7 +86,7 @@ async def _publish_loop(stop_event: asyncio.Event):
       i += 1
   finally:
     await producer.stop()
-    log.info("Heartbeat publisher stopped")
+    log.info("heartbeat: publisher stopped")
 
 
 def start_heartbeat_thread() -> tuple[threading.Thread, "threading.Event"]:

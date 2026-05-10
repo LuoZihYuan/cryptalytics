@@ -15,6 +15,11 @@ from ingestion.service.websocket import WebSocketService
 from pylib.repository.delta import DeltaRepository
 
 structlog.configure(
+  processors=[
+    structlog.processors.add_log_level,
+    structlog.processors.TimeStamper(fmt="iso"),
+    structlog.dev.ConsoleRenderer(sort_keys=False),
+  ],
   wrapper_class=structlog.make_filtering_bound_logger(settings.log_level),
 )
 log = structlog.get_logger()
@@ -45,18 +50,21 @@ async def lifecycle():
   server.add_insecure_port(f"[::]:{settings.grpc_port}")
   await server.start()
 
-  log.info("Ingestion server started", grpc_port=settings.grpc_port)
+  log.info(
+    "lifecycle: started",
+    grpc_port=settings.grpc_port,
+  )
 
   yield
 
   # --- Shutdown (order matters) ---
-  log.info("Shutting down...")
+  log.info("lifecycle: stopping")
   await server.stop(grace=5)
   await websocket_service.close()
   await rest_service.close()
   await kafka_repository.stop()
   await airflow_client.close()
-  log.info("Shutdown complete")
+  log.info("lifecycle: stopped")
 
 
 async def run():

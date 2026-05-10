@@ -11,6 +11,11 @@ from backfill.download import download_parse_save
 from pylib.repository.delta import DeltaRepository
 
 structlog.configure(
+  processors=[
+    structlog.processors.add_log_level,
+    structlog.processors.TimeStamper(fmt="iso"),
+    structlog.dev.ConsoleRenderer(sort_keys=False),
+  ],
   wrapper_class=structlog.make_filtering_bound_logger(settings.log_level),
 )
 log = structlog.get_logger()
@@ -22,7 +27,7 @@ async def run(symbol: str, start_date: str, end_date: str):
 
   plan = build_download_plan(start, end)
   log.info(
-    "Starting backfill",
+    "backfill: starting",
     symbol=symbol,
     start_date=start_date,
     end_date=end_date,
@@ -58,7 +63,11 @@ async def run(symbol: str, start_date: str, end_date: str):
     results = await asyncio.gather(*tasks)
     total_candles = sum(results)
 
-  log.info("Backfill complete", symbol=symbol, candles=total_candles)
+  log.info(
+    "backfill: complete",
+    symbol=symbol,
+    candles=total_candles,
+  )
 
 
 def main():

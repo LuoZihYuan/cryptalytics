@@ -17,12 +17,12 @@ class KafkaRepository:
     await self._ensure_topic()
     self.producer = AIOKafkaProducer(bootstrap_servers=settings.kafka_bootstrap_servers)
     await self.producer.start()
-    log.info("Kafka repository started")
+    log.info("kafka: producer started")
 
   async def stop(self):
     if self.producer:
       await self.producer.stop()
-      log.info("Kafka repository stopped")
+      log.info("kafka: producer stopped")
 
   async def save_tick(self, tick: Tick):
     if not self.producer:
@@ -52,12 +52,15 @@ class KafkaRepository:
         ]
       )
       log.info(
-        "Kafka topic created",
+        "kafka: topic created",
         topic=settings.kafka_topic_ticks,
         partitions=settings.kafka_topic_ticks_partitions,
         retention_ms=settings.kafka_topic_ticks_retention_ms,
       )
     except TopicAlreadyExistsError:
-      log.info("Kafka topic already exists", topic=settings.kafka_topic_ticks)
+      log.info(
+        "kafka: topic exists",
+        topic=settings.kafka_topic_ticks,
+      )
     finally:
       await admin.close()
