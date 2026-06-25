@@ -29,11 +29,3 @@ kustomize-build-output.yaml
 .skaffold/
 tilt_modules/
 .devspace/
-
-# Terraform (Infrastructure as Code)
-.terraform/
-*.tfstate
-*.tfstate.backup
-*.tfvars
-*.tfvars.json
-crash.log
