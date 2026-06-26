@@ -1,0 +1,53 @@
+# ---- Credentials / keys ----
+# Raw TLS material (transient input to `kubectl create secret tls`)
+# and kubeconfigs exported into the project dir.
+*.pem
+*.key
+*.p12
+*.pfx
+# Uncomment the next line to also ignore certs (public certs/CA bundles are
+# often committable, so it's off by default):
+# *.crt
+*kubeconfig*
+
+# ---- Helm ----
+# Packaged charts produced by `helm package`
+*.tgz
+
+# Downloaded dependency charts (pulled by `helm dependency update`).
+# Ignore these only if you commit Chart.lock and re-pull on CI/CD.
+# If you vendor dependencies instead, remove this line.
+charts/
+
+# Rendered output from `helm template`
+rendered/
+manifests-rendered/
+
+# ---- Kustomize ----
+# Kustomize prints to stdout by default, so usually there's no file to ignore.
+# If you redirect output to disk, set the real filename below and uncomment:
+# build-output.yaml
+
+# ---- Secrets / sensitive data ----
+# Decrypted SOPS files (commit only the encrypted versions)
+*.dec.yaml
+*.decrypted.yaml
+secrets.*.yaml
+
+# Raw secret manifests you don't want committed.
+# NOTE: these also catch SealedSecret/ExternalSecret manifests, which are
+# encrypted-by-design and meant to be committed. Narrow or negate if you use them.
+secrets.yaml
+*-secret.yaml
+
+# Local kubeconfig / cluster credentials
+kubeconfig
+*.kubeconfig
+.kube/
+
+# ---- Misc tooling ----
+# Skaffold / Tilt / Telepresence / DevSpace local state
+.skaffold/
+tilt_modules/
+.devspace/
+.vagrant/
