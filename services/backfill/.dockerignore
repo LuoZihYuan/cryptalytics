@@ -1,0 +1,140 @@
+# --- Source Control ---------------------------------------------------------
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+
+# --- Development Environment ------------------------------------------------
+
+# Environments
+#   Never copy a host virtual environment into the image; dependencies should
+#   be reinstalled inside the build (e.g. via uv sync or pip install).
+.env
+.envrc
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+
+# --- Dependency Management --------------------------------------------------
+
+# pdm
+.pdm-python
+.pdm-build/
+
+# pixi
+.pixi/*
+!.pixi/config.toml
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+__pypackages__/
+
+# PyPI configuration file
+.pypirc
+
+
+# --- Compilation / Runtime Artifacts ----------------------------------------
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
+# C extensions
+*.so
+
+# Cython debug symbols
+cython_debug/
+
+
+# --- Testing & Quality Assurance --------------------------------------------
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+*.lcov
+.hypothesis/
+.pytest_cache/
+cover/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Ruff stuff:
+.ruff_cache/
+
+
+# --- Build & Packaging ------------------------------------------------------
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# PyBuilder
+.pybuilder/
+target/
+
+
+# --- Containerization & Deployment ------------------------------------------
+
+# Docker
+#   These don't belong inside the image, and excluding the Dockerfile keeps
+#   edits to it from needlessly invalidating the build cache.
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+
+# --- Documentation ----------------------------------------------------------
+
+# Documentation
+#   Not needed at runtime, but left commented out because builds often
+#   reference the README (e.g. as readme in pyproject.toml). Uncomment to
+#   exclude it if yours doesn't.
+# README.md
+LICENSE
