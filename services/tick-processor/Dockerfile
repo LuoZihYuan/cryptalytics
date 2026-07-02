@@ -1,14 +1,15 @@
+# syntax=docker/dockerfile:1
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 ENV UV_NO_DEV=1
 ENV UV_PYTHON_DOWNLOADS=0
 WORKDIR /app/services/tick-processor
-COPY shared/pylib /app/shared/pylib
-COPY services/tick-processor/pyproject.toml services/tick-processor/uv.lock ./
+COPY --from=pylib . /app/shared/pylib
+COPY pyproject.toml uv.lock ./
 RUN sed -i 's/, editable = true//' pyproject.toml
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project
-COPY services/tick-processor/tick_processor ./tick_processor
+COPY tick_processor ./tick_processor
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen
 RUN apt-get update && apt-get install -y --no-install-recommends wget \

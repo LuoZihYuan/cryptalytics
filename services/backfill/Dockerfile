@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 # Compile Python to bytecode for faster startup; copy files instead of linking
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
@@ -6,14 +7,14 @@ ENV UV_NO_DEV=1
 # Use system Python instead of downloading managed Python
 ENV UV_PYTHON_DOWNLOADS=0
 WORKDIR /app/services/backfill
-COPY shared/pylib /app/shared/pylib
-COPY services/backfill/pyproject.toml services/backfill/uv.lock ./
+COPY --from=pylib . /app/shared/pylib
+COPY pyproject.toml uv.lock ./
 # Remove editable flag so pylib is copied to site-packages, not symlinked
 RUN sed -i 's/, editable = true//' pyproject.toml
 # Install dependencies only (cached layer)
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project
-COPY services/backfill/backfill ./backfill
+COPY backfill ./backfill
 # Install project
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen

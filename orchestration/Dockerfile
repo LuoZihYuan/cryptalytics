@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM apache/airflow:3.1.7
 RUN uv pip install --no-cache \
   "apache-airflow==${AIRFLOW_VERSION}" \
@@ -6,5 +7,5 @@ RUN uv pip install --no-cache \
   "apache-airflow-providers-grpc>=3.9.1" \
   "protobuf>=6.33.0" \
   "grpcio>=1.78.0"
-COPY shared/pb/src/pb/ingestion_pb2.py shared/pb/src/pb/ingestion_pb2_grpc.py /home/airflow/.local/lib/python3.12/site-packages/
+COPY --from=pb src/pb/ingestion_pb2.py src/pb/ingestion_pb2_grpc.py /home/airflow/.local/lib/python3.12/site-packages/
 RUN sed -i 's/from \. import ingestion_pb2/import ingestion_pb2/' /home/airflow/.local/lib/python3.12/site-packages/ingestion_pb2_grpc.py
